@@ -1,0 +1,4 @@
+.idea
+.virtualenv
+config_local.py
+*.pyc
