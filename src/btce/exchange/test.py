@@ -80,3 +80,4 @@ class TestExchange(Exchange):
                 self._price_stream.on_next(tick.value)
         self._balance_stream.on_next(FirstCurrencyBalance(Decimal(0)))
         self._balance_stream.on_next(SecondCurrencyBalance(Decimal(0)))
+        logger.info('Orders: %s, buy orders: %s, sell orders: %s', self.orders, self.buy_orders, self.sell_orders)
