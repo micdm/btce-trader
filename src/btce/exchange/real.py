@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
 import json
-from time import time
+import os.path
 
 from functools import partial
 import hashlib
@@ -58,6 +58,7 @@ class _TradeApiConnector:
         self._key = key
         self._secret = secret
         self._http_client = AsyncHTTPClient()
+        self._nonce_keeper = _NonceKeeper()
 
     @coroutine
     def _make_request(self, method, params=None):
@@ -73,7 +74,7 @@ class _TradeApiConnector:
     def _get_request_body(self, method, params):
         params.update({
             'method': method,
-            'nonce': int(time()),
+            'nonce': self._nonce_keeper.get(),
         })
         return '&'.join('%s=%s' % item for item in params.items())
 
@@ -91,6 +92,18 @@ class _TradeApiConnector:
             'amount': str(amount),
         })
         return dict((key, Decimal(value)) for key, value in response['funds'].items())
+
+
+class _NonceKeeper:
+
+    def get(self):
+        store_file = os.path.join(config.DATA_DIR, 'nonce')
+        with open(store_file, 'r') as store:
+            nonce = int(store.read())
+            nonce += 1
+        with open(store_file, 'w') as store:
+            store.write(str(nonce))
+        return nonce
 
 
 class RealExchange(Exchange):

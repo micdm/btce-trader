@@ -2,3 +2,4 @@
 .virtualenv
 config_local.py
 *.pyc
+/data/*
