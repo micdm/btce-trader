@@ -2,7 +2,9 @@ from decimal import Decimal
 import os.path
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+SRC_DIR = os.path.join(BASE_DIR, 'src')
 DATA_DIR = os.path.join(BASE_DIR, 'data')
+TEST_DIR = os.path.join(SRC_DIR, 'tests')
 
 DB_HOST = 'localhost'
 DB_PORT = 5432
