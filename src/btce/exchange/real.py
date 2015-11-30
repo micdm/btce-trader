@@ -93,6 +93,15 @@ class _TradeApiConnector:
         })
         return dict((key, Decimal(value)) for key, value in response['funds'].items())
 
+    @coroutine
+    def get_active_orders(self):
+        response = yield self._make_request('ActiveOrders')
+        return ({
+            'type': value['type'],
+            'amount': Decimal(value['amount']),
+            'price': Decimal(value['rate']),
+        } for value in response.values() if value['pair'] == self._currency_pair)
+
 
 class _NonceKeeper:
 
@@ -151,6 +160,7 @@ class RealExchange(Exchange):
     def _run(self):
         ioloop = IOLoop.instance()
         ioloop.add_callback(partial(self._request_all_data, ioloop))
+        ioloop.add_callback(partial(self._request_active_orders, ioloop))
         ioloop.start()
 
     def _request_all_data(self, ioloop):
@@ -182,6 +192,22 @@ class RealExchange(Exchange):
             self._update_balance(balance)
         except Exception as e:
             logger.warn('Cannot get balance: %s', e)
+
+    @coroutine
+    def _request_active_orders(self, ioloop):
+        try:
+            orders = yield self._trade_api.get_active_orders()
+            orders = sorted(orders, key=lambda order: order['price'])
+            orders = ({
+                'type': order['type'],
+                'amount': normalize_value(order['amount'], FIRST_CURRENCY_PLACES),
+                'price': normalize_value(order['price'], SECOND_CURRENCY_PLACES),
+            } for order in orders)
+            logger.debug('Active orders: %s' %
+                         ', '.join('%(type)s %(amount)s for %(price)s' % order for order in orders))
+        except Exception as e:
+            logger.warn('Cannot get active orders: %s', e)
+        ioloop.add_timeout(timedelta(hours=3), partial(self._request_active_orders, ioloop))
 
     def _update_balance(self, balance):
         first_currency_amount = normalize_value(balance[config.FIRST_CURRENCY], FIRST_CURRENCY_PLACES)
