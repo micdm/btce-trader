@@ -61,6 +61,18 @@ class _TradeApiConnector:
         self._nonce_keeper = _NonceKeeper()
 
     @coroutine
+    def _try_make_request(self, count, *args, **kwargs):
+        try:
+            return (yield self._make_request(*args, **kwargs))
+        except Exception as e:
+            count += 1
+            if count >= 20:
+                raise Exception('cannot make request after %s tries: %s' % (count, e))
+            if not count % 5:
+                logger.warning('Cannot make request even after %s tries: %s', count, e)
+            return (yield self._try_make_request(count, *args, **kwargs))
+
+    @coroutine
     def _make_request(self, method, params=None):
         request_body = self._get_request_body(method, params or {})
         sign = hmac.new(self._secret.encode(), request_body.encode(), hashlib.sha512).hexdigest()
@@ -80,12 +92,12 @@ class _TradeApiConnector:
 
     @coroutine
     def get_balance(self):
-        response = yield self._make_request('getInfo')
+        response = yield self._try_make_request(0, 'getInfo')
         return dict((key, Decimal(value)) for key, value in response['funds'].items())
 
     @coroutine
     def create_order(self, order_type, amount, price):
-        response = yield self._make_request('Trade', {
+        response = yield self._try_make_request(0, 'Trade', {
             'pair': _get_currency_pair(),
             'type': order_type,
             'rate': str(price),
@@ -95,7 +107,7 @@ class _TradeApiConnector:
 
     @coroutine
     def get_active_orders(self):
-        response = yield self._make_request('ActiveOrders')
+        response = yield self._try_make_request(0, 'ActiveOrders')
         return ({
             'type': value['type'],
             'amount': Decimal(value['amount']),
