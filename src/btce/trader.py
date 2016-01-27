@@ -1,5 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
+from random import uniform
 
 from btce import config
 from btce.common import normalize_value, FIRST_CURRENCY_PLACES, SECOND_CURRENCY_PLACES, get_logger, SellOrder, \
@@ -87,7 +88,7 @@ class Trader:
     def _get_distinct_jumping_price_stream(self, price_stream):
         return (price_stream
             .scan(
-                lambda prev, price: prev if prev and abs(price - prev) / prev < 0.05 else price
+                lambda prev, price: prev if prev and abs(price - prev) / prev < config.JUMP_VALUE else price
             )
             .distinct_until_changed()
             .skip(1))
@@ -124,7 +125,9 @@ class Trader:
             )))
 
     def _create_sell_order(self, balance, price, reason):
-        new_price = normalize_value(price + price * config.MARGIN, SECOND_CURRENCY_PLACES)
+        new_price = normalize_value(price * (Decimal(1) + config.MARGIN +
+                                             self._get_random_margin_jitter(config.MARGIN_JITTER)),
+                                    SECOND_CURRENCY_PLACES)
         amount = config.DEAL_AMOUNT or max(balance, config.MIN_AMOUNT)
         logger.info('Create sell order: price is %s, new price is %s, reason is %s', price, new_price, reason)
         if amount <= balance:
@@ -133,7 +136,9 @@ class Trader:
             logger.info('Not enough funds for sell')
 
     def _create_buy_order(self, balance, price, reason):
-        new_price = normalize_value(price - price * config.MARGIN, SECOND_CURRENCY_PLACES)
+        new_price = normalize_value(price * (Decimal(1) - config.MARGIN -
+                                             self._get_random_margin_jitter(config.MARGIN_JITTER)),
+                                    SECOND_CURRENCY_PLACES)
         amount = config.DEAL_AMOUNT or max(config.MIN_AMOUNT, normalize_value(balance / new_price,
                                                                               FIRST_CURRENCY_PLACES))
         logger.info('Create buy order: price is %s, new price is %s, reason is %s', price, new_price, reason)
@@ -141,3 +146,6 @@ class Trader:
             self._order_stream.on_next(BuyOrder(amount, new_price))
         else:
             logger.info('Not enough funds for buy')
+
+    def _get_random_margin_jitter(self, jitter):
+        return Decimal(uniform(-float(jitter), float(jitter)))

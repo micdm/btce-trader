@@ -20,8 +20,10 @@ SECOND_CURRENCY = 'usd'
 EXCHANGE_MARGIN = Decimal('0.002')
 TRADER_MARGIN = Decimal('0.05')
 MARGIN = EXCHANGE_MARGIN + TRADER_MARGIN
+MARGIN_JITTER = Decimal('0.01')
 MIN_AMOUNT = Decimal('0.01')
 DEAL_AMOUNT = MIN_AMOUNT
+JUMP_VALUE = Decimal('0.05')
 
 try:
     from .config_local import *

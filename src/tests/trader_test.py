@@ -87,3 +87,9 @@ class TraderTest(TestCase):
         subjects = Subject(), Subject()
         result = test_stream(subjects, self._trader._get_distinct_positive_balance_and_price_stream(*subjects), data)
         self.assertEqual(result, expected)
+
+    def test_get_random_margin_jitter(self):
+        for i in range(1000000):
+            value = self._trader._get_random_margin_jitter(1)
+            self.assertGreaterEqual(value, -1)
+            self.assertLessEqual(value, 1)
