@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Sequence, Dict
 
 
 class _Event:
@@ -30,3 +31,9 @@ class PriceEvent(_Event):
 
     def __init__(self, value: Decimal):
         self.value = value
+
+
+class ActiveOrdersEvent(_Event):
+
+    def __init__(self, orders: Sequence[Dict]):
+        self.orders = orders

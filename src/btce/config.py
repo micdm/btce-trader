@@ -1,5 +1,7 @@
+from datetime import timedelta
 from decimal import Decimal
 import os.path
+
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 SRC_DIR = os.path.join(BASE_DIR, 'src')
@@ -23,7 +25,9 @@ MARGIN = EXCHANGE_MARGIN + TRADER_MARGIN
 MARGIN_JITTER = Decimal('0.01')
 MIN_AMOUNT = Decimal('0.01')
 DEAL_AMOUNT = MIN_AMOUNT
-JUMP_VALUE = Decimal('0.05')
+PRICE_JUMP_VALUE = Decimal('0.05')
+ORDER_OUTDATE_PERIOD = timedelta(days=30)
+
 
 try:
     from .config_local import *

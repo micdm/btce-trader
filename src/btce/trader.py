@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import timedelta, datetime
 from decimal import Decimal
 from random import uniform
 
@@ -38,12 +38,17 @@ class Trader:
             .map(lambda event: event.amount)
             .scan(u(lambda prev, change, balance: r(balance, balance - prev if prev is not None else Decimal(0))),
                   r(None, None)))
+        active_order_stream = (self._event_stream
+            .filter(lambda event: isinstance(event, events.ActiveOrdersEvent))
+            .map(lambda event: event.orders))
         self._log_time_and_price(time_stream, price_stream)
         self._log_balance(first_currency_balance_stream, second_currency_balance_stream)
+        self._log_active_orders(active_order_stream)
         self._create_orders_when_price_jumps(price_stream, first_currency_balance_stream,
                                              second_currency_balance_stream)
         self._create_orders_when_balance_changes(price_stream, first_currency_balance_stream,
                                                  second_currency_balance_stream)
+        self._cancel_outdated_orders(active_order_stream)
 
     def _log_time_and_price(self, time_stream, price_stream):
         (time_stream
@@ -60,10 +65,16 @@ class Trader:
             .distinct_until_changed()
             .subscribe(u(lambda balance, change: logger.info('Second currency balance is %s (%s)', balance, change))))
 
+    def _log_active_orders(self, active_order_stream):
+        (active_order_stream
+            .subscribe(lambda orders: logger.debug('Active orders: %s' %
+                                                   ', '.join('%(type)s %(amount)s for %(price)s' % order
+                                                             for order in orders))))
+
     def _create_orders_when_price_jumps(self, price_stream, first_currency_balance_stream,
                                         second_currency_balance_stream):
         jumping_price_stream = (price_stream
-            .scan(lambda prev, price: prev if prev and abs(price - prev) / prev < config.JUMP_VALUE else price)
+            .scan(lambda prev, price: prev if prev and abs(price - prev) / prev < config.PRICE_JUMP_VALUE else price)
             .distinct_until_changed()
             .skip(1))
         (jumping_price_stream
@@ -113,3 +124,14 @@ class Trader:
 
     def _get_random_margin_jitter(self, jitter):
         return Decimal(uniform(-float(jitter), float(jitter)))
+
+    def _cancel_outdated_orders(self, active_order_stream):
+        (active_order_stream
+            .select_many(lambda order: Observable.create(order))
+            .filter(lambda order: datetime.utcnow() - order['created'] > config.ORDER_OUTDATE_PERIOD)
+            .subscribe(self._cancel_order))
+
+    def _cancel_order(self, order):
+        logger.info('Cancel outdated order: id is %s, creation date is %s (%s ago)', order['id'], order['created'],
+                    datetime.utcnow() - order['created'])
+        self._command_stream.on_next(commands.CancelOrderCommand(order['id']))

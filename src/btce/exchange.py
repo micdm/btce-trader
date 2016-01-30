@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
-import json
-import os.path
-
 from functools import partial
 import hashlib
 import hmac
+import json
+import os.path
+
 from rx import Observable
 from tornado.gen import coroutine
 from tornado.httpclient import AsyncHTTPClient, HTTPRequest
@@ -13,6 +13,8 @@ from tornado.ioloop import IOLoop
 
 from btce import config, commands, events
 from btce.common import get_logger, normalize_value, FIRST_CURRENCY_PLACES, SECOND_CURRENCY_PLACES
+from btce.utils import u, r
+
 
 logger = get_logger(__name__)
 
@@ -108,10 +110,17 @@ class _TradeApiConnector:
     def get_active_orders(self):
         response = yield self._try_make_request(0, 'ActiveOrders')
         return ({
-            'type': value['type'],
-            'amount': Decimal(value['amount']),
-            'price': Decimal(value['rate']),
-        } for value in response.values() if value['pair'] == self._currency_pair)
+            'id': order_id,
+            'type': data['type'],
+            'amount': Decimal(data['amount']),
+            'price': Decimal(data['rate']),
+            'created': datetime.utcfromtimestamp(data['timestamp_created']),
+        } for order_id, data in response.items() if data['pair'] == self._currency_pair)
+
+    @coroutine
+    def cancel_order(self, order_id):
+        response = yield self._try_make_request(0, 'CancelOrder', {'order_id': order_id})
+        return dict((key, Decimal(value)) for key, value in response['funds'].items())
 
 
 class _NonceKeeper:
@@ -135,37 +144,52 @@ class RealExchange:
         self._command_stream = command_stream
 
     def init(self):
-        self._subscribe_for_sell_order()
-        self._subscribe_for_buy_order()
+        self._subscribe_for_sell_order_command()
+        self._subscribe_for_buy_order_command()
+        self._subscribe_for_cancel_order_command()
         self._run()
 
-    def _subscribe_for_sell_order(self):
+    def _subscribe_for_sell_order_command(self):
         (self._command_stream
             .filter(lambda command: isinstance(command, commands.CreateSellOrderCommand))
-            .map(lambda command: command.order)
-            .subscribe(self._create_sell_order))
-
-    def _subscribe_for_buy_order(self):
-        (self._command_stream
-            .filter(lambda command: isinstance(command, commands.CreateBuyOrderCommand))
-            .map(lambda command: command.order)
-            .subscribe(self._create_buy_order))
+            .map(lambda command: r(command.amount, command.price))
+            .subscribe(u(self._create_sell_order)))
 
     @coroutine
-    def _create_sell_order(self, order):
-        logger.debug('Creating sell order %s', order)
+    def _create_sell_order(self, amount, price):
+        logger.debug('Creating sell order (%s for %s)', amount, price)
         try:
-            yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_SELL, order.amount, order.price)
+            yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_SELL, amount, price)
         except Exception as e:
             logger.debug('Cannot create sell order: %s', e)
 
+    def _subscribe_for_buy_order_command(self):
+        (self._command_stream
+            .filter(lambda command: isinstance(command, commands.CreateBuyOrderCommand))
+            .map(lambda command: r(command.amount, command.price))
+            .subscribe(u(self._create_buy_order)))
+
     @coroutine
-    def _create_buy_order(self, order):
-        logger.debug('Creating buy order %s', order)
+    def _create_buy_order(self, amount, price):
+        logger.debug('Creating buy order (%s for %s)', amount, price)
         try:
-            yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_BUY, order.amount, order.price)
+            yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_BUY, amount, price)
         except Exception as e:
             logger.debug('Cannot create buy order: %s', e)
+
+    def _subscribe_for_cancel_order_command(self):
+        (self._command_stream
+            .filter(lambda command: isinstance(command, commands.CancelOrderCommand))
+            .map(lambda command: command.order_id)
+            .subscribe(self._cancel_order))
+
+    @coroutine
+    def _cancel_order(self, order_id):
+        logger.debug('Cancelling order %s', order_id)
+        try:
+            yield self._trade_api.cancel_order(order_id)
+        except Exception as e:
+            logger.debug('Cannot cancel order: %s', e)
 
     def _run(self):
         ioloop = IOLoop.instance()
@@ -212,12 +236,13 @@ class RealExchange:
             orders = yield self._trade_api.get_active_orders()
             orders = sorted(orders, key=lambda order: order['price'])
             orders = ({
+                'id': order['id'],
                 'type': order['type'],
                 'amount': normalize_value(order['amount'], FIRST_CURRENCY_PLACES),
                 'price': normalize_value(order['price'], SECOND_CURRENCY_PLACES),
+                'created': order['created'],
             } for order in orders)
-            logger.debug('Active orders: %s' %
-                         ', '.join('%(type)s %(amount)s for %(price)s' % order for order in orders))
+            self._event_stream.on_next(events.ActiveOrdersEvent(orders))
         except Exception as e:
             logger.warn('Cannot get active orders: %s', e)
         ioloop.add_timeout(timedelta(hours=3), partial(self._request_active_orders, ioloop))
