@@ -1,4 +1,4 @@
-from btce.utils.utils import u
+from btce.utils import u
 
 
 def use_dataproviders(cls):

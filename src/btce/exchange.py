@@ -6,14 +6,13 @@ import os.path
 from functools import partial
 import hashlib
 import hmac
+from rx import Observable
 from tornado.gen import coroutine
 from tornado.httpclient import AsyncHTTPClient, HTTPRequest
 from tornado.ioloop import IOLoop
 
-from btce import config
-from btce.common import BuyOrder, SellOrder, get_logger, normalize_value, FIRST_CURRENCY_PLACES, FirstCurrencyBalance, \
-    SecondCurrencyBalance, SECOND_CURRENCY_PLACES
-from btce.exchange.base import Exchange
+from btce import config, commands, events
+from btce.common import get_logger, normalize_value, FIRST_CURRENCY_PLACES, SECOND_CURRENCY_PLACES
 
 logger = get_logger(__name__)
 
@@ -127,12 +126,13 @@ class _NonceKeeper:
         return nonce
 
 
-class RealExchange(Exchange):
+class RealExchange:
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, event_stream: Observable, command_stream: Observable):
         self._public_api = _PublicApiConnector(_get_currency_pair())
         self._trade_api = _TradeApiConnector(_get_currency_pair(), config.API_KEY, config.API_SECRET)
+        self._event_stream = event_stream
+        self._command_stream = command_stream
 
     def init(self):
         self._subscribe_for_sell_order()
@@ -140,34 +140,32 @@ class RealExchange(Exchange):
         self._run()
 
     def _subscribe_for_sell_order(self):
-        (self._order_stream
-            .filter(lambda order: isinstance(order, SellOrder))
+        (self._command_stream
+            .filter(lambda command: isinstance(command, commands.CreateSellOrderCommand))
+            .map(lambda command: command.order)
             .subscribe(self._create_sell_order))
 
     def _subscribe_for_buy_order(self):
-        (self._order_stream
-            .filter(lambda order: isinstance(order, BuyOrder))
+        (self._command_stream
+            .filter(lambda command: isinstance(command, commands.CreateBuyOrderCommand))
+            .map(lambda command: command.order)
             .subscribe(self._create_buy_order))
 
     @coroutine
     def _create_sell_order(self, order):
         logger.debug('Creating sell order %s', order)
         try:
-            balance = yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_SELL, order.amount, order.price)
+            yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_SELL, order.amount, order.price)
         except Exception as e:
             logger.debug('Cannot create sell order: %s', e)
-        else:
-            self._update_balance(balance)
 
     @coroutine
     def _create_buy_order(self, order):
         logger.debug('Creating buy order %s', order)
         try:
-            balance = yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_BUY, order.amount, order.price)
+            yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_BUY, order.amount, order.price)
         except Exception as e:
             logger.debug('Cannot create buy order: %s', e)
-        else:
-            self._update_balance(balance)
 
     def _run(self):
         ioloop = IOLoop.instance()
@@ -185,7 +183,7 @@ class RealExchange(Exchange):
     def _request_server_time(self):
         try:
             server_time = yield self._public_api.get_time()
-            self._time_stream.on_next(server_time)
+            self._event_stream.on_next(events.TimeEvent(server_time))
         except Exception as e:
             logger.warn('Cannot get server time: %s', e)
 
@@ -193,7 +191,7 @@ class RealExchange(Exchange):
     def _request_price(self):
         try:
             price = yield self._public_api.get_price()
-            self._price_stream.on_next(normalize_value(price, SECOND_CURRENCY_PLACES))
+            self._event_stream.on_next(events.PriceEvent(normalize_value(price, SECOND_CURRENCY_PLACES)))
         except Exception as e:
             logger.warn('Cannot get price: %s', e)
 
@@ -201,7 +199,10 @@ class RealExchange(Exchange):
     def _request_balance(self):
         try:
             balance = yield self._trade_api.get_balance()
-            self._update_balance(balance)
+            first_currency_amount = normalize_value(balance[config.FIRST_CURRENCY], FIRST_CURRENCY_PLACES)
+            self._event_stream.on_next(events.FirstCurrencyBalanceEvent(first_currency_amount))
+            second_currency_amount = normalize_value(balance[config.SECOND_CURRENCY], SECOND_CURRENCY_PLACES)
+            self._event_stream.on_next(events.SecondCurrencyBalanceEvent(second_currency_amount))
         except Exception as e:
             logger.warn('Cannot get balance: %s', e)
 
@@ -220,9 +221,3 @@ class RealExchange(Exchange):
         except Exception as e:
             logger.warn('Cannot get active orders: %s', e)
         ioloop.add_timeout(timedelta(hours=3), partial(self._request_active_orders, ioloop))
-
-    def _update_balance(self, balance):
-        first_currency_amount = normalize_value(balance[config.FIRST_CURRENCY], FIRST_CURRENCY_PLACES)
-        self._balance_stream.on_next(FirstCurrencyBalance(first_currency_amount))
-        second_currency_amount = normalize_value(balance[config.SECOND_CURRENCY], SECOND_CURRENCY_PLACES)
-        self._balance_stream.on_next(SecondCurrencyBalance(second_currency_amount))
