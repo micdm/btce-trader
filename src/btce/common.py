@@ -37,6 +37,11 @@ def get_logger(name):
                 'level': 'WARNING',
                 'propagate': False,
             },
+            'Rx': {
+                'handlers': ['console'],
+                'level': 'WARNING',
+                'propagate': False,
+            },
         },
     })
     return logging.getLogger(name)
