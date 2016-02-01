@@ -13,6 +13,8 @@ DB_PORT = 5432
 DB_USER = 'postgres'
 DB_PASSWORD = ''
 
+EXCHANGE_SITE = 'https://btc-e.nz'
+
 API_KEY = None
 API_SECRET = None
 

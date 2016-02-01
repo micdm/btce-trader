@@ -1,6 +1,9 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Sequence, Dict
+
+from typing import Sequence
+
+from btce.models import Order
 
 
 class _Event:
@@ -35,5 +38,5 @@ class PriceEvent(_Event):
 
 class ActiveOrdersEvent(_Event):
 
-    def __init__(self, orders: Sequence[Dict]):
+    def __init__(self, orders: Sequence[Order]):
         self.orders = orders

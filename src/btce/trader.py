@@ -30,12 +30,12 @@ class Trader:
             .map(lambda event: event.value))
         first_currency_balance_stream = (self._event_stream
             .filter(lambda event: isinstance(event, events.FirstCurrencyBalanceEvent))
-            .map(lambda event: event.amount)
+            .map(lambda event: event.value)
             .scan(u(lambda prev, change, balance: r(balance, balance - prev if prev is not None else Decimal(0))),
                   r(None, None)))
         second_currency_balance_stream = (self._event_stream
             .filter(lambda event: isinstance(event, events.SecondCurrencyBalanceEvent))
-            .map(lambda event: event.amount)
+            .map(lambda event: event.value)
             .scan(u(lambda prev, change, balance: r(balance, balance - prev if prev is not None else Decimal(0))),
                   r(None, None)))
         active_order_stream = (self._event_stream
@@ -67,9 +67,7 @@ class Trader:
 
     def _log_active_orders(self, active_order_stream):
         (active_order_stream
-            .subscribe(lambda orders: logger.debug('Active orders: %s' %
-                                                   ', '.join('%(type)s %(amount)s for %(price)s' % order
-                                                             for order in orders))))
+            .subscribe(lambda orders: logger.debug('Active orders: %s' % ', '.join(map(repr, orders)))))
 
     def _create_orders_when_price_jumps(self, price_stream, first_currency_balance_stream,
                                         second_currency_balance_stream):
@@ -127,11 +125,11 @@ class Trader:
 
     def _cancel_outdated_orders(self, active_order_stream):
         (active_order_stream
-            .select_many(lambda order: Observable.create(order))
-            .filter(lambda order: datetime.utcnow() - order['created'] > config.ORDER_OUTDATE_PERIOD)
+            .select_many(lambda orders: Observable.from_iterable(orders))
+            .filter(lambda order: datetime.utcnow() - order.created > config.ORDER_OUTDATE_PERIOD)
             .subscribe(self._cancel_order))
 
     def _cancel_order(self, order):
-        logger.info('Cancel outdated order: id is %s, creation date is %s (%s ago)', order['id'], order['created'],
-                    datetime.utcnow() - order['created'])
-        self._command_stream.on_next(commands.CancelOrderCommand(order['id']))
+        logger.info('Cancel outdated order %s (%s) created %s (%s ago)', order.order_id, order, order.created,
+                    datetime.utcnow() - order.created)
+        self._command_stream.on_next(commands.CancelOrderCommand(order.order_id))

@@ -13,6 +13,7 @@ from tornado.ioloop import IOLoop
 
 from btce import config, commands, events
 from btce.common import get_logger, normalize_value, FIRST_CURRENCY_PLACES, SECOND_CURRENCY_PLACES
+from btce.models import Order
 from btce.utils import u, r
 
 
@@ -25,7 +26,7 @@ def _get_currency_pair():
 
 class _PublicApiConnector:
 
-    API_URL = 'https://btc-e.com/api/3'
+    API_URL = config.EXCHANGE_SITE + '/api/3'
 
     def __init__(self, currency_pair):
         self._currency_pair = currency_pair
@@ -49,7 +50,7 @@ class _PublicApiConnector:
 
 class _TradeApiConnector:
 
-    API_URL = 'https://btc-e.com/tapi'
+    API_URL = config.EXCHANGE_SITE + '/tapi'
 
     ORDER_TYPE_SELL = 'sell'
     ORDER_TYPE_BUY = 'buy'
@@ -207,42 +208,43 @@ class RealExchange:
     def _request_server_time(self):
         try:
             server_time = yield self._public_api.get_time()
-            self._event_stream.on_next(events.TimeEvent(server_time))
         except Exception as e:
             logger.warn('Cannot get server time: %s', e)
+        else:
+            self._event_stream.on_next(events.TimeEvent(server_time))
 
     @coroutine
     def _request_price(self):
         try:
             price = yield self._public_api.get_price()
-            self._event_stream.on_next(events.PriceEvent(normalize_value(price, SECOND_CURRENCY_PLACES)))
         except Exception as e:
             logger.warn('Cannot get price: %s', e)
+        else:
+            self._event_stream.on_next(events.PriceEvent(normalize_value(price, SECOND_CURRENCY_PLACES)))
 
     @coroutine
     def _request_balance(self):
         try:
             balance = yield self._trade_api.get_balance()
+
+        except Exception as e:
+            logger.warn('Cannot get balance: %s', e)
+        else:
             first_currency_amount = normalize_value(balance[config.FIRST_CURRENCY], FIRST_CURRENCY_PLACES)
             self._event_stream.on_next(events.FirstCurrencyBalanceEvent(first_currency_amount))
             second_currency_amount = normalize_value(balance[config.SECOND_CURRENCY], SECOND_CURRENCY_PLACES)
             self._event_stream.on_next(events.SecondCurrencyBalanceEvent(second_currency_amount))
-        except Exception as e:
-            logger.warn('Cannot get balance: %s', e)
 
     @coroutine
     def _request_active_orders(self, ioloop):
         try:
             orders = yield self._trade_api.get_active_orders()
-            orders = sorted(orders, key=lambda order: order['price'])
-            orders = ({
-                'id': order['id'],
-                'type': order['type'],
-                'amount': normalize_value(order['amount'], FIRST_CURRENCY_PLACES),
-                'price': normalize_value(order['price'], SECOND_CURRENCY_PLACES),
-                'created': order['created'],
-            } for order in orders)
-            self._event_stream.on_next(events.ActiveOrdersEvent(orders))
+            orders = sorted((Order(order['id'], Order.TYPE_SELL if order['type'] == 'sell' else Order.TYPE_BUY,
+                                   normalize_value(order['amount'], FIRST_CURRENCY_PLACES),
+                                   normalize_value(order['price'], SECOND_CURRENCY_PLACES), order['created'])
+                             for order in orders), key=lambda order: order.price)
         except Exception as e:
             logger.warn('Cannot get active orders: %s', e)
+        else:
+            self._event_stream.on_next(events.ActiveOrdersEvent(orders))
         ioloop.add_timeout(timedelta(hours=3), partial(self._request_active_orders, ioloop))
