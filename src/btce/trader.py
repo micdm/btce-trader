@@ -121,7 +121,7 @@ class Trader:
             logger.info('Not enough funds for buy')
 
     def _get_random_margin_jitter(self, jitter):
-        return Decimal(uniform(-float(jitter), float(jitter)))
+        return normalize_value(Decimal(uniform(-float(jitter), float(jitter))), 4)
 
     def _cancel_outdated_orders(self, active_order_stream):
         (active_order_stream
