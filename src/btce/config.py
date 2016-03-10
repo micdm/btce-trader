@@ -3,6 +3,29 @@ from decimal import Decimal
 import os.path
 
 
+class Currency:
+
+    def __init__(self, name, places):
+        self.name = name
+        self.places = places
+
+    def __str__(self):
+        return self.name
+
+
+class TradingOptions:
+
+    def __init__(self, first_currency: Currency, second_currency: Currency, margin, margin_jitter, min_amount,
+                 deal_amount, price_jump_value):
+        self.first_currency = first_currency
+        self.second_currency = second_currency
+        self.margin = margin
+        self.margin_jitter = margin_jitter
+        self.min_amount = min_amount
+        self.deal_amount = deal_amount or min_amount
+        self.price_jump_value = price_jump_value
+
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 SRC_DIR = os.path.join(BASE_DIR, 'src')
 DATA_DIR = os.path.join(BASE_DIR, 'data')
@@ -18,18 +41,17 @@ EXCHANGE_SITE = 'https://btc-e.nz'
 API_KEY = None
 API_SECRET = None
 
-FIRST_CURRENCY = 'btc'
-SECOND_CURRENCY = 'usd'
-
 EXCHANGE_MARGIN = Decimal('0.002')
-TRADER_MARGIN = Decimal('0.05')
-MARGIN = EXCHANGE_MARGIN + TRADER_MARGIN
-MARGIN_JITTER = Decimal('0.01')
-MIN_AMOUNT = Decimal('0.01')
-DEAL_AMOUNT = MIN_AMOUNT
-PRICE_JUMP_VALUE = Decimal('0.05')
 ORDER_OUTDATE_PERIOD = timedelta(days=30)
 
+TRADING = [
+    TradingOptions(Currency('BTC', 6), Currency('USD', 3), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
+                   Decimal('0.01'), None, Decimal('0.05')),
+    TradingOptions(Currency('NMC', 3), Currency('USD', 3), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
+                   Decimal('0.1'), None, Decimal('0.05')),
+    TradingOptions(Currency('NVC', 3), Currency('USD', 3), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
+                   Decimal('0.1'), None, Decimal('0.05')),
+]
 
 try:
     from .config_local import *

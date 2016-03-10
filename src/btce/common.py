@@ -3,10 +3,6 @@ import logging
 import logging.config
 
 
-FIRST_CURRENCY_PLACES = 6
-SECOND_CURRENCY_PLACES = 3
-
-
 def get_logger(name):
     logging.config.dictConfig({
         'version': 1,

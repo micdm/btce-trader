@@ -1,21 +1,15 @@
-from rx.subjects import Subject
+from tornado.ioloop import IOLoop
 
+from btce import config
 from btce.common import get_logger
-from btce.exchange import RealExchange
-from btce.trader import Trader
-
+from btce.trading import Trading
 
 logger = get_logger(__name__)
 
 
-def _main():
-    event_stream = Subject()
-    command_stream = Subject()
-    trader = Trader(event_stream, command_stream)
-    trader.init()
-    exchange = RealExchange(event_stream, command_stream)
-    exchange.init()
-
-
 if __name__ == '__main__':
-    _main()
+    for options in config.TRADING:
+        logger.debug('Starting trade %s/%s', options.first_currency.name, options.second_currency.name)
+        trading = Trading(options)
+        trading.init()
+    IOLoop.instance().start()
