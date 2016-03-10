@@ -24,7 +24,7 @@ class Trader:
         self._command_stream = command_stream
 
     def __str__(self):
-        return '[%s/%s]' % (self._options.first_currency, self._options.second_currency)
+        return str(self._options.pair)
 
     def init(self):
         time_stream = (self._event_stream
@@ -32,20 +32,26 @@ class Trader:
             .map(lambda event: event.value))
         price_stream = (self._event_stream
             .filter(lambda event: isinstance(event, events.PriceEvent))
+            .filter(lambda event: event.pair == self._options.pair)
             .map(lambda event: event.value))
         first_currency_balance_stream = (self._event_stream
-            .filter(lambda event: isinstance(event, events.FirstCurrencyBalanceEvent))
+            .filter(lambda event: isinstance(event, events.BalanceEvent))
+            .filter(lambda event: event.currency == self._options.pair.first)
             .map(lambda event: event.value)
             .scan(u(lambda prev, change, balance: r(balance, balance - prev if prev is not None else Decimal(0))),
                   r(None, None)))
         second_currency_balance_stream = (self._event_stream
-            .filter(lambda event: isinstance(event, events.SecondCurrencyBalanceEvent))
+            .filter(lambda event: isinstance(event, events.BalanceEvent))
+            .filter(lambda event: event.currency == self._options.pair.second)
             .map(lambda event: event.value)
             .scan(u(lambda prev, change, balance: r(balance, balance - prev if prev is not None else Decimal(0))),
                   r(None, None)))
         active_order_stream = (self._event_stream
             .filter(lambda event: isinstance(event, events.ActiveOrdersEvent))
+            .filter(lambda event: event.pair == self._options.pair)
             .map(lambda event: event.orders))
+        self._get_server_time()
+        self._get_price()
         self._log_time_and_price(time_stream, price_stream)
         self._log_balance(first_currency_balance_stream, second_currency_balance_stream)
         self._log_active_orders(active_order_stream)
@@ -55,11 +61,21 @@ class Trader:
                                                  second_currency_balance_stream)
         self._cancel_outdated_orders(active_order_stream)
 
+    def _get_server_time(self):
+        (Observable
+            .timer(1, 1000)
+            .subscribe(lambda count: self._command_stream.on_next(commands.GetServerTimeCommand())))
+
+    def _get_price(self):
+        (Observable
+            .timer(1, 5000)
+            .subscribe(lambda count: self._command_stream.on_next(commands.GetPriceCommand(self._options.pair))))
+
     def _log_time_and_price(self, time_stream, price_stream):
         (time_stream
-            .scan(lambda prev, time: prev if prev and time - prev < timedelta(minutes=10) else time)
+            #.scan(lambda prev, time: prev if prev and time - prev < timedelta(minutes=10) else time)
             .combine_latest(price_stream, lambda time, price: r(time, price))
-            .distinct_until_changed(u(lambda time, price: time))
+            #.distinct_until_changed(u(lambda time, price: time))
             .subscribe(u(lambda time, price: logger.info('%s Time now is %s, price is %s', self, time, price))))
 
     def _log_balance(self, first_currency_balance_stream, second_currency_balance_stream):
@@ -107,25 +123,24 @@ class Trader:
 
     def _create_sell_order(self, balance, price, reason):
         margin = self._options.margin + self._get_random_margin_jitter(self._options.margin_jitter)
-        new_price = normalize_value(price + price * margin, self._options.second_currency.places)
+        new_price = normalize_value(price + price * margin, self._options.pair.second.places)
         amount = self._options.deal_amount or max(balance, self._options.min_amount)
         logger.info('%s Create sell order: price is %s, new price is %s (margin is %s), reason is %s', self, price,
                     new_price, margin, reason)
         if amount <= balance:
-            self._command_stream.on_next(commands.CreateSellOrderCommand(amount, new_price))
+            self._command_stream.on_next(commands.CreateSellOrderCommand(self._options.pair, amount, new_price))
         else:
             logger.info('%s Not enough funds for sell', self)
 
     def _create_buy_order(self, balance, price, reason):
         margin = self._options.margin + self._get_random_margin_jitter(self._options.margin_jitter)
-        new_price = normalize_value(price - price * margin, self._options.second_currency.places)
+        new_price = normalize_value(price - price * margin, self._options.pair.second.places)
         amount = self._options.deal_amount or max(self._options.min_amount,
-                                                  normalize_value(balance / new_price,
-                                                                  self._options.first_currency.places))
+                                                  normalize_value(balance / new_price, self._options.pair.first.places))
         logger.info('%s Create buy order: price is %s, new price is %s (margin is %s), reason is %s', self, price,
                     new_price, margin, reason)
         if amount <= balance / new_price:
-            self._command_stream.on_next(commands.CreateBuyOrderCommand(amount, new_price))
+            self._command_stream.on_next(commands.CreateBuyOrderCommand(self._options.pair, amount, new_price))
         else:
             logger.info('%s Not enough funds for buy', self)
 

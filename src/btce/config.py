@@ -13,12 +13,21 @@ class Currency:
         return self.name
 
 
+class CurrencyPair:
+
+    def __init__(self, first, second):
+        self.first = first
+        self.second = second
+
+    def __str__(self):
+        return '%s/%s' % (self.first, self.second)
+
+
 class TradingOptions:
 
-    def __init__(self, first_currency: Currency, second_currency: Currency, margin, margin_jitter, min_amount,
+    def __init__(self, pair: CurrencyPair, margin, margin_jitter, min_amount,
                  deal_amount, price_jump_value):
-        self.first_currency = first_currency
-        self.second_currency = second_currency
+        self.pair = pair
         self.margin = margin
         self.margin_jitter = margin_jitter
         self.min_amount = min_amount
@@ -45,11 +54,11 @@ EXCHANGE_MARGIN = Decimal('0.002')
 ORDER_OUTDATE_PERIOD = timedelta(days=30)
 
 TRADING = [
-    TradingOptions(Currency('BTC', 6), Currency('USD', 3), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
+    TradingOptions(CurrencyPair(Currency('BTC', 6), Currency('USD', 3)), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
                    Decimal('0.01'), None, Decimal('0.05')),
-    TradingOptions(Currency('NMC', 3), Currency('USD', 3), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
+    TradingOptions(CurrencyPair(Currency('NMC', 3), Currency('USD', 3)), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
                    Decimal('0.1'), None, Decimal('0.05')),
-    TradingOptions(Currency('NVC', 3), Currency('USD', 3), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
+    TradingOptions(CurrencyPair(Currency('NVC', 3), Currency('USD', 3)), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
                    Decimal('0.1'), None, Decimal('0.05')),
 ]
 

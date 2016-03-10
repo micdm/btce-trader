@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from btce.config import TradingOptions
+from btce.config import TradingOptions, CurrencyPair
 from functools import partial
 import hashlib
 import hmac
@@ -22,27 +22,26 @@ from btce.utils import u, r
 logger = get_logger(__name__)
 
 
-def _currency_pair_to_string(pair):
-    return '_'.join(currency.name.lower() for currency in pair)
+def _currency_pair_to_string(pair: CurrencyPair):
+    return '%s_%s' % (pair.first.name.lower(), pair.second.name.lower())
 
 
 class _PublicApiConnector:
 
     API_URL = config.EXCHANGE_SITE + '/api/3'
 
-    def __init__(self, currency_pair):
-        self._currency_pair = _currency_pair_to_string(currency_pair)
+    def __init__(self):
         self._http_client = AsyncHTTPClient()
 
     @coroutine
-    def _make_request(self, method):
-        response = yield self._http_client.fetch('%s/%s/%s' % (self.API_URL, method, self._currency_pair))
+    def _make_request(self, method, pair):
+        response = yield self._http_client.fetch('%s/%s/%s' % (self.API_URL, method, pair))
         return json.loads(response.body.decode())
 
     @coroutine
-    def get_price(self):
-        response = yield self._make_request('ticker')
-        return Decimal(response[self._currency_pair]['last'])
+    def get_price(self, pair):
+        response = yield self._make_request('ticker', pair)
+        return Decimal(response[pair]['last'])
 
 
 class _TradeApiConnector:
@@ -52,8 +51,7 @@ class _TradeApiConnector:
     ORDER_TYPE_SELL = 'sell'
     ORDER_TYPE_BUY = 'buy'
 
-    def __init__(self, currency_pair, key, secret):
-        self._currency_pair = _currency_pair_to_string(currency_pair)
+    def __init__(self, key, secret):
         self._key = key
         self._secret = secret
         self._http_client = AsyncHTTPClient()
@@ -90,22 +88,21 @@ class _TradeApiConnector:
         return '&'.join('%s=%s' % item for item in params.items())
 
     @coroutine
-    def get_balance(self):
+    def get_balance(self, currency):
         response = yield self._try_make_request(0, 'getInfo')
-        return dict((key, Decimal(value)) for key, value in response['funds'].items())
+        return Decimal(response['funds'][currency.name.lower()])
 
     @coroutine
-    def create_order(self, order_type, amount, price):
-        response = yield self._try_make_request(0, 'Trade', {
-            'pair': self._currency_pair,
+    def create_order(self, order_type, pair, amount, price):
+        yield self._try_make_request(0, 'Trade', {
+            'pair': pair,
             'type': order_type,
             'rate': str(price),
             'amount': str(amount),
         })
-        return dict((key, Decimal(value)) for key, value in response['funds'].items())
 
     @coroutine
-    def get_active_orders(self):
+    def get_active_orders(self, pair):
         response = yield self._try_make_request(0, 'ActiveOrders')
         return ({
             'id': order_id,
@@ -113,12 +110,11 @@ class _TradeApiConnector:
             'amount': Decimal(data['amount']),
             'price': Decimal(data['rate']),
             'created': datetime.utcfromtimestamp(data['timestamp_created']),
-        } for order_id, data in response.items() if data['pair'] == self._currency_pair)
+        } for order_id, data in response.items() if data['pair'] == pair)
 
     @coroutine
     def cancel_order(self, order_id):
-        response = yield self._try_make_request(0, 'CancelOrder', {'order_id': order_id})
-        return dict((key, Decimal(value)) for key, value in response['funds'].items())
+        yield self._try_make_request(0, 'CancelOrder', {'order_id': order_id})
 
 
 class _NonceKeeper:
@@ -135,115 +131,115 @@ class _NonceKeeper:
 
 class RealExchange:
 
-    def __init__(self, options: TradingOptions, event_stream: Observable, command_stream: Observable):
-        self._public_api = _PublicApiConnector((options.first_currency, options.second_currency))
-        self._trade_api = _TradeApiConnector((options.first_currency, options.second_currency), config.API_KEY,
-                                             config.API_SECRET)
-        self._options = options
+    def __init__(self, event_stream: Observable, command_stream: Observable):
+        self._public_api = _PublicApiConnector()
+        self._trade_api = _TradeApiConnector(config.API_KEY, config.API_SECRET)
         self._event_stream = event_stream
         self._command_stream = command_stream
 
-    def __str__(self):
-        return '[%s/%s]' % (self._options.first_currency, self._options.second_currency)
-
     def init(self):
+        self._subscribe_for_get_server_time_command()
+        self._subscribe_for_get_price_command()
+        self._subscribe_for_get_balance_command()
+        self._subscribe_for_get_active_orders_command()
         self._subscribe_for_sell_order_command()
         self._subscribe_for_buy_order_command()
         self._subscribe_for_cancel_order_command()
-        self._add_callbacks()
+        IOLoop.instance().start()
+
+    def _subscribe_for_get_server_time_command(self):
+        (self._command_stream
+            .filter(lambda command: isinstance(command, commands.GetServerTimeCommand))
+            .debounce(1000)
+            .subscribe(lambda command: self._get_server_time()))
+
+    @coroutine
+    def _get_server_time(self):
+        server_time = datetime.utcnow()
+        self._event_stream.on_next(events.TimeEvent(server_time))
+
+    def _subscribe_for_get_price_command(self):
+        (self._command_stream
+            .filter(lambda command: isinstance(command, commands.GetPriceCommand))
+            .subscribe(lambda command: self._get_price(command.pair)))
+
+    @coroutine
+    def _get_price(self, pair):
+        try:
+            price = yield self._public_api.get_price(_currency_pair_to_string(pair))
+        except Exception as e:
+            logger.warn('Cannot get price: %s', e)
+        else:
+            self._event_stream.on_next(events.PriceEvent(pair, normalize_value(price, pair.second.places)))
+
+    def _subscribe_for_get_balance_command(self):
+        (self._command_stream
+            .filter(lambda command: isinstance(command, commands.GetBalanceCommand))
+            .subscribe(lambda command: self._get_balance(command.currency)))
+
+    @coroutine
+    def _get_balance(self, currency):
+        try:
+            balance = yield self._trade_api.get_balance(currency)
+        except Exception as e:
+            logger.warn('Cannot get balance: %s', e)
+        else:
+            amount = normalize_value(balance[currency.name.lower()], currency.places)
+            self._event_stream.on_next(events.BalanceEvent(currency, amount))
+
+    def _subscribe_for_get_active_orders_command(self):
+        (self._command_stream
+            .filter(lambda command: isinstance(command, commands.GetActiveOrdersCommand))
+            .subscribe(lambda command: self._get_active_orders(command.pair)))
+
+    @coroutine
+    def _get_active_orders(self, pair):
+        try:
+            orders = yield self._trade_api.get_active_orders(_currency_pair_to_string(pair))
+            orders = sorted((Order(order['id'], Order.TYPE_SELL if order['type'] == 'sell' else Order.TYPE_BUY,
+                                   normalize_value(order['amount'], pair.first.places),
+                                   normalize_value(order['price'], pair.second.places), order['created'])
+                             for order in orders), key=lambda order: order.price)
+        except Exception as e:
+            logger.warn('Cannot get active orders: %s', e)
+        else:
+            self._event_stream.on_next(events.ActiveOrdersEvent(orders))
 
     def _subscribe_for_sell_order_command(self):
         (self._command_stream
             .filter(lambda command: isinstance(command, commands.CreateSellOrderCommand))
-            .map(lambda command: r(command.amount, command.price))
-            .subscribe(u(self._create_sell_order)))
+            .subscribe(lambda command: self._create_sell_order(command.pair, command.amount, command.price)))
 
     @coroutine
-    def _create_sell_order(self, amount, price):
-        logger.debug('%s Creating sell order (%s for %s)', self, amount, price)
+    def _create_sell_order(self, pair, amount, price):
+        logger.debug('Creating sell order (%s%s for %s%s)', amount, pair.first, price, pair.second)
         try:
-            yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_SELL, amount, price)
+            yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_SELL, _currency_pair_to_string(pair), amount, price)
         except Exception as e:
-            logger.debug('%s Cannot create sell order: %s', self, e)
+            logger.debug('Cannot create sell order: %s', e)
 
     def _subscribe_for_buy_order_command(self):
         (self._command_stream
             .filter(lambda command: isinstance(command, commands.CreateBuyOrderCommand))
-            .map(lambda command: r(command.amount, command.price))
-            .subscribe(u(self._create_buy_order)))
+            .subscribe(lambda command: self._create_buy_order(command.pair, command.amount, command.price)))
 
     @coroutine
-    def _create_buy_order(self, amount, price):
-        logger.debug('%s Creating buy order (%s for %s)', self, amount, price)
+    def _create_buy_order(self, pair, amount, price):
+        logger.debug('Creating buy order (%s%s for %s%s)', amount, pair.first, price, pair.second)
         try:
-            yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_BUY, amount, price)
+            yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_BUY, _currency_pair_to_string(pair), amount, price)
         except Exception as e:
-            logger.debug('%s Cannot create buy order: %s', self, e)
+            logger.debug('Cannot create buy order: %s', e)
 
     def _subscribe_for_cancel_order_command(self):
         (self._command_stream
             .filter(lambda command: isinstance(command, commands.CancelOrderCommand))
-            .map(lambda command: command.order_id)
-            .subscribe(self._cancel_order))
+            .subscribe(lambda command: self._cancel_order(command.order_id)))
 
     @coroutine
     def _cancel_order(self, order_id):
-        logger.debug('%s Cancelling order %s', self, order_id)
+        logger.debug('Cancelling order %s', order_id)
         try:
             yield self._trade_api.cancel_order(order_id)
         except Exception as e:
-            logger.debug('%s Cannot cancel order: %s', self, e)
-
-    def _add_callbacks(self):
-        ioloop = IOLoop.instance()
-        ioloop.add_callback(partial(self._request_all_data, ioloop))
-        ioloop.add_callback(partial(self._request_active_orders, ioloop))
-
-    def _request_all_data(self, ioloop):
-        self._request_server_time()
-        self._request_price()
-        self._request_balance()
-        ioloop.add_timeout(timedelta(seconds=3), partial(self._request_all_data, ioloop))
-
-    @coroutine
-    def _request_server_time(self):
-        server_time = datetime.utcnow()
-        self._event_stream.on_next(events.TimeEvent(server_time))
-
-    @coroutine
-    def _request_price(self):
-        try:
-            price = yield self._public_api.get_price()
-        except Exception as e:
-            logger.warn('%s Cannot get price: %s', self, e)
-        else:
-            self._event_stream.on_next(events.PriceEvent(normalize_value(price, self._options.second_currency.places)))
-
-    @coroutine
-    def _request_balance(self):
-        try:
-            balance = yield self._trade_api.get_balance()
-        except Exception as e:
-            logger.warn('%s Cannot get balance: %s', self, e)
-        else:
-            first_currency_amount = normalize_value(balance[self._options.first_currency.name.lower()],
-                                                    self._options.first_currency.places)
-            self._event_stream.on_next(events.FirstCurrencyBalanceEvent(first_currency_amount))
-            second_currency_amount = normalize_value(balance[self._options.second_currency.name.lower()],
-                                                     self._options.second_currency.places)
-            self._event_stream.on_next(events.SecondCurrencyBalanceEvent(second_currency_amount))
-
-    @coroutine
-    def _request_active_orders(self, ioloop):
-        try:
-            orders = yield self._trade_api.get_active_orders()
-            orders = sorted((Order(order['id'], Order.TYPE_SELL if order['type'] == 'sell' else Order.TYPE_BUY,
-                                   normalize_value(order['amount'], self._options.first_currency.places),
-                                   normalize_value(order['price'], self._options.second_currency.places),
-                                   order['created'])
-                             for order in orders), key=lambda order: order.price)
-        except Exception as e:
-            logger.warn('%s Cannot get active orders: %s', self, e)
-        else:
-            self._event_stream.on_next(events.ActiveOrdersEvent(orders))
-        ioloop.add_timeout(timedelta(hours=3), partial(self._request_active_orders, ioloop))
+            logger.debug('Cannot cancel order: %s', e)
