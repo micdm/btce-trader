@@ -1,10 +1,9 @@
 from datetime import datetime
 from decimal import Decimal
 
-from btce.config import CurrencyPair, Currency
 from typing import Sequence
 
-from btce.models import Order
+from btce.models import CurrencyPair, Currency, Order
 
 
 class _Event:

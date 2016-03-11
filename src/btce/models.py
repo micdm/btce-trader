@@ -2,6 +2,38 @@ from datetime import datetime
 from decimal import Decimal
 
 
+class Currency:
+
+    def __init__(self, name, places):
+        self.name = name
+        self.places = places
+
+    def __str__(self):
+        return self.name
+
+
+class CurrencyPair:
+
+    def __init__(self, first, second):
+        self.first = first
+        self.second = second
+
+    def __str__(self):
+        return '%s/%s' % (self.first, self.second)
+
+
+class TradingOptions:
+
+    def __init__(self, pair: CurrencyPair, margin, margin_jitter, min_amount,
+                 deal_amount, price_jump_value):
+        self.pair = pair
+        self.margin = margin
+        self.margin_jitter = margin_jitter
+        self.min_amount = min_amount
+        self.deal_amount = deal_amount or min_amount
+        self.price_jump_value = price_jump_value
+
+
 class Order:
 
     TYPE_SELL = 0
@@ -15,4 +47,4 @@ class Order:
         self.created = created
 
     def __repr__(self):
-        return '%s %s for %s' % ('sell' if self.order_type == self.TYPE_SELL else 'buy', self.amount, self.price)
+        return 'Order(type=%s,amount=%s,price=%s)' % ('sell' if self.order_type == self.TYPE_SELL else 'buy', self.amount, self.price)

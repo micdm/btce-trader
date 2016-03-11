@@ -2,37 +2,7 @@ from datetime import timedelta
 from decimal import Decimal
 import os.path
 
-
-class Currency:
-
-    def __init__(self, name, places):
-        self.name = name
-        self.places = places
-
-    def __str__(self):
-        return self.name
-
-
-class CurrencyPair:
-
-    def __init__(self, first, second):
-        self.first = first
-        self.second = second
-
-    def __str__(self):
-        return '%s/%s' % (self.first, self.second)
-
-
-class TradingOptions:
-
-    def __init__(self, pair: CurrencyPair, margin, margin_jitter, min_amount,
-                 deal_amount, price_jump_value):
-        self.pair = pair
-        self.margin = margin
-        self.margin_jitter = margin_jitter
-        self.min_amount = min_amount
-        self.deal_amount = deal_amount or min_amount
-        self.price_jump_value = price_jump_value
+from btce.models import Currency, CurrencyPair, TradingOptions
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))

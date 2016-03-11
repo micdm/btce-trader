@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from btce.config import Currency, CurrencyPair
+from btce.models import Currency, CurrencyPair
 
 
 class _Command:

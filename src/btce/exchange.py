@@ -1,22 +1,19 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
-
-from btce.config import TradingOptions, CurrencyPair
-from functools import partial
 import hashlib
 import hmac
 import json
 import os.path
 
 from rx import Observable
+from rx.disposables import CompositeDisposable
 from tornado.gen import coroutine
 from tornado.httpclient import AsyncHTTPClient, HTTPRequest
 from tornado.ioloop import IOLoop
 
 from btce import config, commands, events
 from btce.common import get_logger, normalize_value
-from btce.models import Order
-from btce.utils import u, r
+from btce.models import CurrencyPair, Order
 
 
 logger = get_logger(__name__)
@@ -54,7 +51,7 @@ class _TradeApiConnector:
     def __init__(self, key, secret):
         self._key = key
         self._secret = secret
-        self._http_client = AsyncHTTPClient()
+        self._http_client = AsyncHTTPClient(max_clients=1)
         self._nonce_keeper = _NonceKeeper()
 
     @coroutine
@@ -129,39 +126,73 @@ class _NonceKeeper:
         return nonce
 
 
-class RealExchange:
+class ExchangeConnector:
 
-    def __init__(self, event_stream: Observable, command_stream: Observable):
+    def __init__(self, events: Observable, commands: Observable):
+        self._subscription = None
         self._public_api = _PublicApiConnector()
         self._trade_api = _TradeApiConnector(config.API_KEY, config.API_SECRET)
-        self._event_stream = event_stream
-        self._command_stream = command_stream
+        self._events = events
+        self._commands = commands
+
+    def __repr__(self):
+        return 'ExchangeConnector()'
 
     def init(self):
-        self._subscribe_for_get_server_time_command()
-        self._subscribe_for_get_price_command()
-        self._subscribe_for_get_balance_command()
-        self._subscribe_for_get_active_orders_command()
-        self._subscribe_for_sell_order_command()
-        self._subscribe_for_buy_order_command()
-        self._subscribe_for_cancel_order_command()
+        logger.info('Starting %s', self)
+        self._subscription = CompositeDisposable(
+            self._subscribe_for_get_server_time_command(),
+            self._subscribe_for_get_price_command(),
+            self._subscribe_for_get_balance_command(),
+            self._subscribe_for_get_active_orders_command(),
+            self._subscribe_for_create_sell_order_command(),
+            self._subscribe_for_create_buy_order_command(),
+            self._subscribe_for_cancel_order_command(),
+        )
+
+    def run(self):
         IOLoop.instance().start()
 
     def _subscribe_for_get_server_time_command(self):
-        (self._command_stream
+        return (self._commands
             .filter(lambda command: isinstance(command, commands.GetServerTimeCommand))
-            .debounce(1000)
+            .throttle_first(1000)
             .subscribe(lambda command: self._get_server_time()))
+
+    def _subscribe_for_get_price_command(self):
+        return (self._commands
+            .filter(lambda command: isinstance(command, commands.GetPriceCommand))
+            .subscribe(lambda command: self._get_price(command.pair)))
+
+    def _subscribe_for_get_balance_command(self):
+        return (self._commands
+            .filter(lambda command: isinstance(command, commands.GetBalanceCommand))
+            .subscribe(lambda command: self._get_balance(command.currency)))
+
+    def _subscribe_for_get_active_orders_command(self):
+        return (self._commands
+            .filter(lambda command: isinstance(command, commands.GetActiveOrdersCommand))
+            .subscribe(lambda command: self._get_active_orders(command.pair)))
+
+    def _subscribe_for_create_sell_order_command(self):
+        return (self._commands
+            .filter(lambda command: isinstance(command, commands.CreateSellOrderCommand))
+            .subscribe(lambda command: self._create_sell_order(command.pair, command.amount, command.price)))
+
+    def _subscribe_for_create_buy_order_command(self):
+        return (self._commands
+            .filter(lambda command: isinstance(command, commands.CreateBuyOrderCommand))
+            .subscribe(lambda command: self._create_buy_order(command.pair, command.amount, command.price)))
+
+    def _subscribe_for_cancel_order_command(self):
+        return (self._commands
+            .filter(lambda command: isinstance(command, commands.CancelOrderCommand))
+            .subscribe(lambda command: self._cancel_order(command.order_id)))
 
     @coroutine
     def _get_server_time(self):
         server_time = datetime.utcnow()
-        self._event_stream.on_next(events.TimeEvent(server_time))
-
-    def _subscribe_for_get_price_command(self):
-        (self._command_stream
-            .filter(lambda command: isinstance(command, commands.GetPriceCommand))
-            .subscribe(lambda command: self._get_price(command.pair)))
+        self._events.on_next(events.TimeEvent(server_time))
 
     @coroutine
     def _get_price(self, pair):
@@ -170,12 +201,7 @@ class RealExchange:
         except Exception as e:
             logger.warn('Cannot get price: %s', e)
         else:
-            self._event_stream.on_next(events.PriceEvent(pair, normalize_value(price, pair.second.places)))
-
-    def _subscribe_for_get_balance_command(self):
-        (self._command_stream
-            .filter(lambda command: isinstance(command, commands.GetBalanceCommand))
-            .subscribe(lambda command: self._get_balance(command.currency)))
+            self._events.on_next(events.PriceEvent(pair, normalize_value(price, pair.second.places)))
 
     @coroutine
     def _get_balance(self, currency):
@@ -184,13 +210,8 @@ class RealExchange:
         except Exception as e:
             logger.warn('Cannot get balance: %s', e)
         else:
-            amount = normalize_value(balance[currency.name.lower()], currency.places)
-            self._event_stream.on_next(events.BalanceEvent(currency, amount))
-
-    def _subscribe_for_get_active_orders_command(self):
-        (self._command_stream
-            .filter(lambda command: isinstance(command, commands.GetActiveOrdersCommand))
-            .subscribe(lambda command: self._get_active_orders(command.pair)))
+            amount = normalize_value(balance, currency.places)
+            self._events.on_next(events.BalanceEvent(currency, amount))
 
     @coroutine
     def _get_active_orders(self, pair):
@@ -203,12 +224,7 @@ class RealExchange:
         except Exception as e:
             logger.warn('Cannot get active orders: %s', e)
         else:
-            self._event_stream.on_next(events.ActiveOrdersEvent(orders))
-
-    def _subscribe_for_sell_order_command(self):
-        (self._command_stream
-            .filter(lambda command: isinstance(command, commands.CreateSellOrderCommand))
-            .subscribe(lambda command: self._create_sell_order(command.pair, command.amount, command.price)))
+            self._events.on_next(events.ActiveOrdersEvent(pair, orders))
 
     @coroutine
     def _create_sell_order(self, pair, amount, price):
@@ -218,11 +234,6 @@ class RealExchange:
         except Exception as e:
             logger.debug('Cannot create sell order: %s', e)
 
-    def _subscribe_for_buy_order_command(self):
-        (self._command_stream
-            .filter(lambda command: isinstance(command, commands.CreateBuyOrderCommand))
-            .subscribe(lambda command: self._create_buy_order(command.pair, command.amount, command.price)))
-
     @coroutine
     def _create_buy_order(self, pair, amount, price):
         logger.debug('Creating buy order (%s%s for %s%s)', amount, pair.first, price, pair.second)
@@ -231,11 +242,6 @@ class RealExchange:
         except Exception as e:
             logger.debug('Cannot create buy order: %s', e)
 
-    def _subscribe_for_cancel_order_command(self):
-        (self._command_stream
-            .filter(lambda command: isinstance(command, commands.CancelOrderCommand))
-            .subscribe(lambda command: self._cancel_order(command.order_id)))
-
     @coroutine
     def _cancel_order(self, order_id):
         logger.debug('Cancelling order %s', order_id)
@@ -243,3 +249,8 @@ class RealExchange:
             yield self._trade_api.cancel_order(order_id)
         except Exception as e:
             logger.debug('Cannot cancel order: %s', e)
+
+    def deinit(self):
+        logger.info('Stopping %s', self)
+        if self._subscription is not None:
+            self._subscription.dispose()
