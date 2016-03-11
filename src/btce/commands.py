@@ -29,6 +29,12 @@ class GetActiveOrdersCommand(_Command):
         self.pair = pair
 
 
+class GetCompletedOrdersCommand(_Command):
+
+    def __init__(self, pair: CurrencyPair):
+        self.pair = pair
+
+
 class _CreateOrderCommand(_Command):
 
     def __init__(self, currency: Currency, amount: Decimal, price: Decimal):

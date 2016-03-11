@@ -21,7 +21,7 @@ API_KEY = None
 API_SECRET = None
 
 EXCHANGE_MARGIN = Decimal('0.002')
-ORDER_OUTDATE_PERIOD = timedelta(days=30)
+ORDER_OUTDATE_PERIOD = timedelta(days=35)
 
 TRADING = [
     TradingOptions(CurrencyPair(Currency('BTC', 6), Currency('USD', 3)), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),

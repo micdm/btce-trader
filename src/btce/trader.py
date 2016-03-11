@@ -20,6 +20,7 @@ class Trader:
     POLL_PRICE_INTERVAL = 10000
     POLL_BALANCE_INTERVAL = 600000
     POLL_ACTIVE_ORDERS_INTERVAL = 3600000
+    POLL_COMPLETED_ORDERS_INTERVAL = 60000
 
     REASON_PRICE_JUMP = 0
     REASON_BALANCE_CHANGE = 1
@@ -64,6 +65,12 @@ class Trader:
             .filter(lambda event: event.pair == self._options.pair)
             .map(lambda event: event.orders))
 
+    def _get_completed_orders(self):
+        return (self._events
+            .filter(lambda event: isinstance(event, events.CompletedOrdersEvent))
+            .filter(lambda event: event.pair == self._options.pair)
+            .map(lambda event: event.orders))
+
     def _get_jumping_price(self):
         return (self._get_price()
             .scan(lambda prev, price: prev if prev and abs(price - prev) / prev < self._options.price_jump_value
@@ -78,9 +85,11 @@ class Trader:
             self._subscribe_for_poll_price(),
             self._subscribe_for_poll_balance(),
             self._subscribe_for_poll_active_orders(),
+            self._subscribe_for_poll_completed_orders(),
             self._subscribe_for_time_and_price(),
             self._subscribe_for_balance(),
             self._subscribe_for_active_orders(),
+            self._subscribe_for_completed_orders(),
             self._subscribe_for_jumping_price()
         )
 
@@ -108,6 +117,11 @@ class Trader:
         return (Observable
             .timer(self.POLL_IMMEDIATELY, self.POLL_ACTIVE_ORDERS_INTERVAL)
             .subscribe(lambda count: self._commands.on_next(commands.GetActiveOrdersCommand(self._options.pair))))
+
+    def _subscribe_for_poll_completed_orders(self):
+        return (Observable
+            .timer(self.POLL_IMMEDIATELY, self.POLL_COMPLETED_ORDERS_INTERVAL)
+            .subscribe(lambda count: self._commands.on_next(commands.GetCompletedOrdersCommand(self._options.pair))))
 
     def _subscribe_for_time_and_price(self):
         return (Observable
@@ -155,6 +169,12 @@ class Trader:
                 .filter(lambda order: datetime.utcnow() - order.created > config.ORDER_OUTDATE_PERIOD)
                 .subscribe(self._cancel_order))
         )
+
+    def _subscribe_for_completed_orders(self):
+        return (self._get_completed_orders()
+            .distinct_until_changed()
+            .subscribe(lambda orders: logger.info('[%s] Completed orders: %s', self._options.pair, ', '.join(map(repr, orders))) if orders
+                                      else logger.info('[%s] No completed orders found', self._options.pair)))
 
     def _subscribe_for_jumping_price(self):
         return CompositeDisposable(

@@ -63,7 +63,7 @@ class _TradeApiConnector:
             if count >= 20:
                 raise Exception('cannot make request after %s tries: %s' % (count, e))
             if not count % 5:
-                logger.warning('Cannot make request even after %s tries: %s', count, e)
+                logger.exception('Cannot make request even after %s tries: %s', count, e)
             return (yield self._try_make_request(count, *args, **kwargs))
 
     @coroutine
@@ -100,14 +100,25 @@ class _TradeApiConnector:
 
     @coroutine
     def get_active_orders(self, pair):
-        response = yield self._try_make_request(0, 'ActiveOrders')
+        response = yield self._try_make_request(0, 'ActiveOrders', {'pair': pair})
         return ({
             'id': order_id,
             'type': data['type'],
             'amount': Decimal(data['amount']),
             'price': Decimal(data['rate']),
             'created': datetime.utcfromtimestamp(data['timestamp_created']),
-        } for order_id, data in response.items() if data['pair'] == pair)
+        } for order_id, data in response.items())
+
+    @coroutine
+    def get_completed_orders(self, pair):
+        response = yield self._try_make_request(0, 'TradeHistory', {'pair': pair, 'count': 20})
+        return ({
+            'id': data['order_id'],
+            'type': data['type'],
+            'amount': Decimal(data['amount']),
+            'price': Decimal(data['rate']),
+            'completed': datetime.utcfromtimestamp(data['timestamp']),
+        } for data in response.values())
 
     @coroutine
     def cancel_order(self, order_id):
@@ -145,6 +156,7 @@ class ExchangeConnector:
             self._subscribe_for_get_price_command(),
             self._subscribe_for_get_balance_command(),
             self._subscribe_for_get_active_orders_command(),
+            self._subscribe_for_get_completed_orders_command(),
             self._subscribe_for_create_sell_order_command(),
             self._subscribe_for_create_buy_order_command(),
             self._subscribe_for_cancel_order_command(),
@@ -173,6 +185,11 @@ class ExchangeConnector:
         return (self._commands
             .filter(lambda command: isinstance(command, commands.GetActiveOrdersCommand))
             .subscribe(lambda command: self._get_active_orders(command.pair)))
+
+    def _subscribe_for_get_completed_orders_command(self):
+        return (self._commands
+            .filter(lambda command: isinstance(command, commands.GetCompletedOrdersCommand))
+            .subscribe(lambda command: self._get_completed_orders(command.pair)))
 
     def _subscribe_for_create_sell_order_command(self):
         return (self._commands
@@ -219,12 +236,25 @@ class ExchangeConnector:
             orders = yield self._trade_api.get_active_orders(_currency_pair_to_string(pair))
             orders = sorted((Order(order['id'], Order.TYPE_SELL if order['type'] == 'sell' else Order.TYPE_BUY,
                                    normalize_value(order['amount'], pair.first.places),
-                                   normalize_value(order['price'], pair.second.places), order['created'])
+                                   normalize_value(order['price'], pair.second.places), order['created'], None)
                              for order in orders), key=lambda order: order.price)
         except Exception as e:
             logger.warn('Cannot get active orders: %s', e)
         else:
             self._events.on_next(events.ActiveOrdersEvent(pair, orders))
+
+    @coroutine
+    def _get_completed_orders(self, pair):
+        try:
+            orders = yield self._trade_api.get_completed_orders(_currency_pair_to_string(pair))
+            orders = sorted((Order(order['id'], Order.TYPE_SELL if order['type'] == 'sell' else Order.TYPE_BUY,
+                                   normalize_value(order['amount'], pair.first.places),
+                                   normalize_value(order['price'], pair.second.places), None, order['completed'])
+                             for order in orders), key=lambda order: order.completed, reverse=True)
+        except Exception as e:
+            logger.warn('Cannot get completed orders: %s', e)
+        else:
+            self._events.on_next(events.CompletedOrdersEvent(pair, orders))
 
     @coroutine
     def _create_sell_order(self, pair, amount, price):

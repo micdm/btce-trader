@@ -35,3 +35,10 @@ class ActiveOrdersEvent(_Event):
     def __init__(self, pair: CurrencyPair, orders: Sequence[Order]):
         self.pair = pair
         self.orders = orders
+
+
+class CompletedOrdersEvent(_Event):
+
+    def __init__(self, pair: CurrencyPair, orders: Sequence[Order]):
+        self.pair = pair
+        self.orders = orders
