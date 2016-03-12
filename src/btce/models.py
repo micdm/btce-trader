@@ -1,6 +1,8 @@
 from datetime import datetime
 from decimal import Decimal
 
+from typing import Optional
+
 
 class Currency:
 
@@ -39,14 +41,20 @@ class Order:
     TYPE_SELL = 0
     TYPE_BUY = 1
 
-    def __init__(self, order_id: str, order_type: int, amount: Decimal, price: Decimal, created: datetime,
-                 completed: datetime):
-        self.order_id = order_id
-        self.order_type = order_type
+    def __init__(self, order_id: int, order_type: int, amount: Decimal, price: Decimal, created: Optional[datetime],
+                 completed: Optional[datetime]):
+        self.id = order_id
+        self.type = order_type
         self.amount = amount
         self.price = price
         self.created = created
         self.completed = completed
 
     def __repr__(self):
-        return 'Order(type=%s,amount=%s,price=%s)' % ('sell' if self.order_type == self.TYPE_SELL else 'buy', self.amount, self.price)
+        return 'Order(type=%s,amount=%s,price=%s)' % ('sell' if self.type == self.TYPE_SELL else 'buy', self.amount, self.price)
+
+    def __hash__(self):
+        return self.id
+
+    def __eq__(self, other):
+        return isinstance(other, Order) and other.id == self.id

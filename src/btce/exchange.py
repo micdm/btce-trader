@@ -12,7 +12,7 @@ from tornado.httpclient import AsyncHTTPClient, HTTPRequest
 from tornado.ioloop import IOLoop
 
 from btce import config, commands, events
-from btce.common import get_logger, normalize_value
+from btce.common import get_logger, normalize_value, MAIN_THREAD
 from btce.models import CurrencyPair, Order
 
 
@@ -168,7 +168,7 @@ class ExchangeConnector:
     def _subscribe_for_get_server_time_command(self):
         return (self._commands
             .filter(lambda command: isinstance(command, commands.GetServerTimeCommand))
-            .throttle_first(1000)
+            .throttle_first(1000, MAIN_THREAD)
             .subscribe(lambda command: self._get_server_time()))
 
     def _subscribe_for_get_price_command(self):
@@ -234,7 +234,7 @@ class ExchangeConnector:
     def _get_active_orders(self, pair):
         try:
             orders = yield self._trade_api.get_active_orders(_currency_pair_to_string(pair))
-            orders = sorted((Order(order['id'], Order.TYPE_SELL if order['type'] == 'sell' else Order.TYPE_BUY,
+            orders = sorted((Order(int(order['id']), Order.TYPE_SELL if order['type'] == 'sell' else Order.TYPE_BUY,
                                    normalize_value(order['amount'], pair.first.places),
                                    normalize_value(order['price'], pair.second.places), order['created'], None)
                              for order in orders), key=lambda order: order.price)
@@ -247,7 +247,7 @@ class ExchangeConnector:
     def _get_completed_orders(self, pair):
         try:
             orders = yield self._trade_api.get_completed_orders(_currency_pair_to_string(pair))
-            orders = sorted((Order(order['id'], Order.TYPE_SELL if order['type'] == 'sell' else Order.TYPE_BUY,
+            orders = sorted((Order(int(order['id']), Order.TYPE_SELL if order['type'] == 'sell' else Order.TYPE_BUY,
                                    normalize_value(order['amount'], pair.first.places),
                                    normalize_value(order['price'], pair.second.places), None, order['completed'])
                              for order in orders), key=lambda order: order.completed, reverse=True)

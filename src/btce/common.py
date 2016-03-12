@@ -2,6 +2,10 @@ from decimal import Decimal
 import logging
 import logging.config
 
+from rx.concurrency import IOLoopScheduler
+
+MAIN_THREAD = IOLoopScheduler()
+
 
 def get_logger(name):
     logging.config.dictConfig({
@@ -28,7 +32,7 @@ def get_logger(name):
                 'handlers': ['console'],
                 'level': 'DEBUG',
             },
-            'sqlalchemy': {
+            'tornado': {
                 'handlers': ['console'],
                 'level': 'WARNING',
                 'propagate': False,
