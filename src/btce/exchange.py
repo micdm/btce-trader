@@ -44,6 +44,8 @@ class _PublicApiConnector:
 
 class _RequestQueue:
 
+    TRY_MAX_COUNT = 5
+
     def __init__(self, request_handler):
         self._queue = []
         self._is_working = False
@@ -51,7 +53,7 @@ class _RequestQueue:
 
     def put(self, *args):
         future = TracebackFuture()
-        self._queue.append((args, future))
+        self._queue.append((args, future, 1))
         if not self._is_working:
             self._execute_next_request()
         return future
@@ -59,12 +61,17 @@ class _RequestQueue:
     @coroutine
     def _execute_next_request(self):
         self._is_working = True
-        request, future = self._queue.pop(0)
+        request, future, try_count = self._queue.pop(0)
         try:
             result = yield self._request_handler(*request)
             future.set_result(result)
         except Exception as e:
-            future.set_exception(e)
+            try_count += 1
+            if try_count > self.TRY_MAX_COUNT:
+                logger.warn('Cannot execute request after %s tries: %s', self.TRY_MAX_COUNT, e)
+                future.set_exception(e)
+            else:
+                self._queue.append((request, future, try_count))
         self._is_working = False
         if self._queue:
             self._execute_next_request()
