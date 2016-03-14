@@ -7,6 +7,7 @@ import os.path
 
 from rx import Observable
 from rx.disposables import CompositeDisposable
+from tornado.concurrent import TracebackFuture
 from tornado.curl_httpclient import CurlAsyncHTTPClient
 from tornado.gen import coroutine
 from tornado.httpclient import HTTPRequest
@@ -41,6 +42,34 @@ class _PublicApiConnector:
         return Decimal(response[pair]['last'])
 
 
+class _RequestQueue:
+
+    def __init__(self, request_handler):
+        self._queue = []
+        self._is_working = False
+        self._request_handler = request_handler
+
+    def put(self, *args):
+        future = TracebackFuture()
+        self._queue.append((args, future))
+        if not self._is_working:
+            self._execute_next_request()
+        return future
+
+    @coroutine
+    def _execute_next_request(self):
+        self._is_working = True
+        request, future = self._queue.pop(0)
+        try:
+            result = yield self._request_handler(*request)
+            future.set_result(result)
+        except Exception as e:
+            future.set_exception(e)
+        self._is_working = False
+        if self._queue:
+            self._execute_next_request()
+
+
 class _TradeApiConnector:
 
     API_URL = config.EXCHANGE_SITE + '/tapi'
@@ -53,18 +82,11 @@ class _TradeApiConnector:
         self._secret = secret
         self._http_client = CurlAsyncHTTPClient(max_clients=1)
         self._nonce_keeper = _NonceKeeper()
+        self._request_queue = _RequestQueue(self._make_request)
 
     @coroutine
-    def _try_make_request(self, count, *args, **kwargs):
-        try:
-            return (yield self._make_request(*args, **kwargs))
-        except Exception as e:
-            count += 1
-            if count >= 20:
-                raise Exception('cannot make request after %s tries: %s' % (count, e))
-            if not count % 5:
-                logger.exception('Cannot make request even after %s tries: %s', count, e)
-            return (yield self._try_make_request(count, *args, **kwargs))
+    def _add_request(self, method, params=None):
+        return (yield self._request_queue.put(method, params))
 
     @coroutine
     def _make_request(self, method, params=None):
@@ -86,14 +108,14 @@ class _TradeApiConnector:
 
     @coroutine
     def get_balance(self, currency):
-        result, error = yield self._try_make_request(0, 'getInfo')
+        result, error = yield self._add_request('getInfo')
         if error is not None:
             raise Exception('cannot make request: %s' % error)
-        return Decimal(result['funds'][currency.name.lower()])
+        return Decimal(result['funds'][currency])
 
     @coroutine
     def create_order(self, order_type, pair, amount, price):
-        result, error = yield self._try_make_request(0, 'Trade', {
+        result, error = yield self._add_request('Trade', {
             'pair': pair,
             'type': order_type,
             'rate': str(price),
@@ -105,10 +127,10 @@ class _TradeApiConnector:
 
     @coroutine
     def get_active_orders(self, pair):
-        result, error = yield self._try_make_request(0, 'ActiveOrders', {'pair': pair})
+        result, error = yield self._add_request('ActiveOrders', {'pair': pair})
         if error is not None:
             if error == 'no orders':
-                return []
+                return ()
             raise Exception('cannot make request: %s' % error)
         return ({
             'id': order_id,
@@ -120,8 +142,10 @@ class _TradeApiConnector:
 
     @coroutine
     def get_completed_orders(self, pair):
-        result, error = yield self._try_make_request(0, 'TradeHistory', {'pair': pair, 'count': 20})
+        result, error = yield self._add_request('TradeHistory', {'pair': pair, 'count': 20})
         if error is not None:
+            if error == 'no trades':
+                return ()
             raise Exception('cannot make request: %s' % error)
         return ({
             'id': data['order_id'],
@@ -133,7 +157,7 @@ class _TradeApiConnector:
 
     @coroutine
     def cancel_order(self, order_id):
-        result, error = yield self._try_make_request(0, 'CancelOrder', {'order_id': order_id})
+        result, error = yield self._add_request('CancelOrder', {'order_id': order_id})
         if error is not None:
             raise Exception('cannot make request: %s' % error)
         return dict((currency, Decimal(value)) for currency, value in result['funds'].items())
@@ -236,7 +260,7 @@ class ExchangeConnector:
     @coroutine
     def _get_balance(self, currency):
         try:
-            balance = yield self._trade_api.get_balance(currency)
+            balance = yield self._trade_api.get_balance(currency.name.lower())
         except Exception as e:
             logger.warn('Cannot get balance: %s', e)
         else:
