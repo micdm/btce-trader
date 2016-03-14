@@ -12,9 +12,8 @@ from tornado.httpclient import AsyncHTTPClient, HTTPRequest
 from tornado.ioloop import IOLoop
 
 from btce import config, commands, events
-from btce.common import get_logger, normalize_value, MAIN_THREAD
-from btce.models import CurrencyPair, Order
-
+from btce.common import get_logger, normalize_value
+from btce.models import CurrencyPair, Order, CURRENCIES
 
 logger = get_logger(__name__)
 
@@ -91,12 +90,13 @@ class _TradeApiConnector:
 
     @coroutine
     def create_order(self, order_type, pair, amount, price):
-        yield self._try_make_request(0, 'Trade', {
+        response = yield self._try_make_request(0, 'Trade', {
             'pair': pair,
             'type': order_type,
             'rate': str(price),
             'amount': str(amount),
         })
+        return dict((currency, Decimal(value)) for currency, value in response['funds'].items())
 
     @coroutine
     def get_active_orders(self, pair):
@@ -122,7 +122,8 @@ class _TradeApiConnector:
 
     @coroutine
     def cancel_order(self, order_id):
-        yield self._try_make_request(0, 'CancelOrder', {'order_id': order_id})
+        response = yield self._try_make_request(0, 'CancelOrder', {'order_id': order_id})
+        return dict((currency, Decimal(value)) for currency, value in response['funds'].items())
 
 
 class _NonceKeeper:
@@ -168,7 +169,6 @@ class ExchangeConnector:
     def _subscribe_for_get_server_time_command(self):
         return (self._commands
             .filter(lambda command: isinstance(command, commands.GetServerTimeCommand))
-            .throttle_first(1000, MAIN_THREAD)
             .subscribe(lambda command: self._get_server_time()))
 
     def _subscribe_for_get_price_command(self):
@@ -260,25 +260,38 @@ class ExchangeConnector:
     def _create_sell_order(self, pair, amount, price):
         logger.debug('Creating sell order (%s%s for %s%s)', amount, pair.first, price, pair.second)
         try:
-            yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_SELL, _currency_pair_to_string(pair), amount, price)
+            balance = yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_SELL,
+                                                         _currency_pair_to_string(pair), amount, price)
         except Exception as e:
             logger.debug('Cannot create sell order: %s', e)
+        else:
+            self._send_balance_events(balance)
 
     @coroutine
     def _create_buy_order(self, pair, amount, price):
         logger.debug('Creating buy order (%s%s for %s%s)', amount, pair.first, price, pair.second)
         try:
-            yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_BUY, _currency_pair_to_string(pair), amount, price)
+            balance = yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_BUY, _currency_pair_to_string(pair), amount, price)
         except Exception as e:
             logger.debug('Cannot create buy order: %s', e)
+        else:
+            self._send_balance_events(balance)
 
     @coroutine
     def _cancel_order(self, order_id):
         logger.debug('Cancelling order %s', order_id)
         try:
-            yield self._trade_api.cancel_order(order_id)
+            balance = yield self._trade_api.cancel_order(order_id)
         except Exception as e:
             logger.debug('Cannot cancel order: %s', e)
+        else:
+            self._send_balance_events(balance)
+
+    def _send_balance_events(self, balance):
+        for currency in CURRENCIES:
+            amount = balance.get(currency.name.lower())
+            if amount is not None:
+                self._commands.on_next(events.BalanceEvent(currency, normalize_value(amount, currency.places)))
 
     def deinit(self):
         logger.info('Stopping %s', self)

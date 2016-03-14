@@ -6,7 +6,7 @@ from typing import Optional
 
 class Currency:
 
-    def __init__(self, name, places):
+    def __init__(self, name: str, places: int):
         self.name = name
         self.places = places
 
@@ -14,14 +14,24 @@ class Currency:
         return self.name
 
 
+CURRENCY_BTC = Currency('BTC', 6)
+CURRENCY_NVC = Currency('NVC', 3)
+CURRENCY_NMC = Currency('NMC', 3)
+CURRENCY_USD = Currency('USD', 3)
+CURRENCIES = (CURRENCY_BTC, CURRENCY_NVC, CURRENCY_NMC, CURRENCY_USD)
+
+
 class CurrencyPair:
 
-    def __init__(self, first, second):
+    def __init__(self, first: Currency, second: Currency):
         self.first = first
         self.second = second
 
     def __str__(self):
         return '%s/%s' % (self.first, self.second)
+
+    def __iter__(self):
+        return self.first, self.second
 
 
 class TradingOptions:

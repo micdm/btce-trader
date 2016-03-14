@@ -2,8 +2,7 @@ from datetime import timedelta
 from decimal import Decimal
 import os.path
 
-from btce.models import Currency, CurrencyPair, TradingOptions
-
+from btce.models import CurrencyPair, TradingOptions, CURRENCY_BTC, CURRENCY_USD, CURRENCY_NMC, CURRENCY_NVC
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 SRC_DIR = os.path.join(BASE_DIR, 'src')
@@ -24,11 +23,11 @@ EXCHANGE_MARGIN = Decimal('0.002')
 ORDER_OUTDATE_PERIOD = timedelta(days=35)
 
 TRADING = [
-    TradingOptions(CurrencyPair(Currency('BTC', 6), Currency('USD', 3)), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
+    TradingOptions(CurrencyPair(CURRENCY_BTC, CURRENCY_USD), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
                    Decimal('0.01'), None, Decimal('0.05')),
-    TradingOptions(CurrencyPair(Currency('NMC', 3), Currency('USD', 3)), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
+    TradingOptions(CurrencyPair(CURRENCY_NMC, CURRENCY_USD), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
                    Decimal('0.1'), None, Decimal('0.05')),
-    TradingOptions(CurrencyPair(Currency('NVC', 3), Currency('USD', 3)), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
+    TradingOptions(CurrencyPair(CURRENCY_NVC, CURRENCY_USD), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
                    Decimal('0.1'), None, Decimal('0.05')),
 ]
 
