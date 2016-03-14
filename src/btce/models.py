@@ -15,8 +15,10 @@ class Currency:
 
 
 CURRENCY_BTC = Currency('BTC', 6)
+CURRENCY_LTC = Currency('LTC', 5)
 CURRENCY_NVC = Currency('NVC', 3)
 CURRENCY_NMC = Currency('NMC', 3)
+CURRENCY_PPC = Currency('PPC', 5)
 CURRENCY_USD = Currency('USD', 3)
 CURRENCIES = (CURRENCY_BTC, CURRENCY_NVC, CURRENCY_NMC, CURRENCY_USD)
 
@@ -42,7 +44,7 @@ class TradingOptions:
         self.margin = margin
         self.margin_jitter = margin_jitter
         self.min_amount = min_amount
-        self.deal_amount = deal_amount or min_amount
+        self.deal_amount = deal_amount
         self.price_jump_value = price_jump_value
 
 

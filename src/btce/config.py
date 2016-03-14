@@ -2,7 +2,8 @@ from datetime import timedelta
 from decimal import Decimal
 import os.path
 
-from btce.models import CurrencyPair, TradingOptions, CURRENCY_BTC, CURRENCY_USD, CURRENCY_NMC, CURRENCY_NVC
+from btce.models import CurrencyPair, TradingOptions, CURRENCY_BTC, CURRENCY_USD, CURRENCY_NMC, CURRENCY_NVC, \
+    CURRENCY_LTC, CURRENCY_PPC
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 SRC_DIR = os.path.join(BASE_DIR, 'src')
@@ -20,15 +21,21 @@ API_KEY = None
 API_SECRET = None
 
 EXCHANGE_MARGIN = Decimal('0.002')
+DEFAULT_OVERALL_MARGIN = EXCHANGE_MARGIN + Decimal('0.05')
+DEFAULT_MARGIN_JITTER = Decimal('0.01')
+DEFAULT_JUMPING_PRICE = Decimal('0.05')
 ORDER_OUTDATE_PERIOD = timedelta(days=35)
 
+def _get_default_trading_options(pair, min_amount):
+    return TradingOptions(pair, DEFAULT_OVERALL_MARGIN, DEFAULT_MARGIN_JITTER, min_amount, min_amount,
+                          DEFAULT_JUMPING_PRICE)
+
 TRADING = [
-    TradingOptions(CurrencyPair(CURRENCY_BTC, CURRENCY_USD), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
-                   Decimal('0.01'), None, Decimal('0.05')),
-    TradingOptions(CurrencyPair(CURRENCY_NMC, CURRENCY_USD), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
-                   Decimal('0.1'), None, Decimal('0.05')),
-    TradingOptions(CurrencyPair(CURRENCY_NVC, CURRENCY_USD), EXCHANGE_MARGIN + Decimal('0.05'), Decimal('0.01'),
-                   Decimal('0.1'), None, Decimal('0.05')),
+    _get_default_trading_options(CurrencyPair(CURRENCY_BTC, CURRENCY_USD), Decimal('0.01')),
+    _get_default_trading_options(CurrencyPair(CURRENCY_LTC, CURRENCY_USD), Decimal('0.1')),
+    _get_default_trading_options(CurrencyPair(CURRENCY_NMC, CURRENCY_USD), Decimal('0.1')),
+    _get_default_trading_options(CurrencyPair(CURRENCY_NVC, CURRENCY_USD), Decimal('0.1')),
+    _get_default_trading_options(CurrencyPair(CURRENCY_PPC, CURRENCY_USD), Decimal('0.1')),
 ]
 
 try:
