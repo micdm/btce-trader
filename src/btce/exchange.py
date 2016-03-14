@@ -7,8 +7,9 @@ import os.path
 
 from rx import Observable
 from rx.disposables import CompositeDisposable
+from tornado.curl_httpclient import CurlAsyncHTTPClient
 from tornado.gen import coroutine
-from tornado.httpclient import AsyncHTTPClient, HTTPRequest
+from tornado.httpclient import HTTPRequest
 from tornado.ioloop import IOLoop
 
 from btce import config, commands, events
@@ -27,7 +28,7 @@ class _PublicApiConnector:
     API_URL = config.EXCHANGE_SITE + '/api/3'
 
     def __init__(self):
-        self._http_client = AsyncHTTPClient()
+        self._http_client = CurlAsyncHTTPClient()
 
     @coroutine
     def _make_request(self, method, pair):
@@ -50,7 +51,7 @@ class _TradeApiConnector:
     def __init__(self, key, secret):
         self._key = key
         self._secret = secret
-        self._http_client = AsyncHTTPClient(max_clients=1)
+        self._http_client = CurlAsyncHTTPClient(max_clients=1)
         self._nonce_keeper = _NonceKeeper()
 
     @coroutine
