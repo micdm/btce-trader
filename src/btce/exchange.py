@@ -74,8 +74,8 @@ class _TradeApiConnector:
         response = yield self._http_client.fetch(request)
         response_body = json.loads(response.body.decode())
         if response_body.get('success'):
-            return response_body['return']
-        raise Exception('cannot make request: %s' % response_body.get('error'))
+            return response_body['return'], None
+        return None, response_body['error']
 
     def _get_request_body(self, method, params):
         params.update({
@@ -86,45 +86,57 @@ class _TradeApiConnector:
 
     @coroutine
     def get_balance(self, currency):
-        response = yield self._try_make_request(0, 'getInfo')
-        return Decimal(response['funds'][currency.name.lower()])
+        result, error = yield self._try_make_request(0, 'getInfo')
+        if error is not None:
+            raise Exception('cannot make request: %s' % error)
+        return Decimal(result['funds'][currency.name.lower()])
 
     @coroutine
     def create_order(self, order_type, pair, amount, price):
-        response = yield self._try_make_request(0, 'Trade', {
+        result, error = yield self._try_make_request(0, 'Trade', {
             'pair': pair,
             'type': order_type,
             'rate': str(price),
             'amount': str(amount),
         })
-        return dict((currency, Decimal(value)) for currency, value in response['funds'].items())
+        if error is not None:
+            raise Exception('cannot make request: %s' % error)
+        return dict((currency, Decimal(value)) for currency, value in result['funds'].items())
 
     @coroutine
     def get_active_orders(self, pair):
-        response = yield self._try_make_request(0, 'ActiveOrders', {'pair': pair})
+        result, error = yield self._try_make_request(0, 'ActiveOrders', {'pair': pair})
+        if error is not None:
+            if error == 'no orders':
+                return []
+            raise Exception('cannot make request: %s' % error)
         return ({
             'id': order_id,
             'type': data['type'],
             'amount': Decimal(data['amount']),
             'price': Decimal(data['rate']),
             'created': datetime.utcfromtimestamp(data['timestamp_created']),
-        } for order_id, data in response.items())
+        } for order_id, data in result.items())
 
     @coroutine
     def get_completed_orders(self, pair):
-        response = yield self._try_make_request(0, 'TradeHistory', {'pair': pair, 'count': 20})
+        result, error = yield self._try_make_request(0, 'TradeHistory', {'pair': pair, 'count': 20})
+        if error is not None:
+            raise Exception('cannot make request: %s' % error)
         return ({
             'id': data['order_id'],
             'type': data['type'],
             'amount': Decimal(data['amount']),
             'price': Decimal(data['rate']),
             'completed': datetime.utcfromtimestamp(data['timestamp']),
-        } for data in response.values())
+        } for data in result.values())
 
     @coroutine
     def cancel_order(self, order_id):
-        response = yield self._try_make_request(0, 'CancelOrder', {'order_id': order_id})
-        return dict((currency, Decimal(value)) for currency, value in response['funds'].items())
+        result, error = yield self._try_make_request(0, 'CancelOrder', {'order_id': order_id})
+        if error is not None:
+            raise Exception('cannot make request: %s' % error)
+        return dict((currency, Decimal(value)) for currency, value in result['funds'].items())
 
 
 class _NonceKeeper:
