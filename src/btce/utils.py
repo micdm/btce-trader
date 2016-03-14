@@ -1,3 +1,6 @@
+from collections import namedtuple
+
+
 class _Result(tuple):
     pass
 
@@ -20,3 +23,11 @@ def _get_args(args):
 
 def r(*args):
     return _Result(args)
+
+
+def d(*names, **kwargs):
+    if names:
+        def _wrapper(*args):
+            return d(**dict(zip(names, args)))
+        return _wrapper
+    return namedtuple('Data', kwargs.keys())(**kwargs)

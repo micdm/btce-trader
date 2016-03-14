@@ -8,7 +8,7 @@ from rx.disposables import CompositeDisposable
 from btce import config, commands, events
 from btce.common import normalize_value, get_logger, MAIN_THREAD
 from btce.models import TradingOptions, Order
-from btce.utils import u, r
+from btce.utils import d
 
 logger = get_logger(__name__)
 
@@ -51,8 +51,8 @@ class Trader:
             .filter(lambda event: isinstance(event, events.BalanceEvent))
             .filter(lambda event: event.currency == currency)
             .map(lambda event: event.value)
-            .scan(u(lambda prev, change, balance: r(balance, balance - prev if prev is not None
-                                                  else Decimal(0))), r(None, None)))
+            .scan(lambda p, balance: d(balance=balance, change=(Decimal(0) if p.balance is None else balance - p.balance)),
+                  d(balance=None, change=None)))
 
     def _get_first_currency_balance(self):
         return self._get_balance(self._options.pair.first)
@@ -74,9 +74,9 @@ class Trader:
 
     def _get_completed_orders_singly(self):
         return (self._get_completed_orders()
-            .scan(u(lambda prev, change, orders: r(orders, set(orders) - set(prev) if prev is not None else {})),
-                  r(None, None))
-            .map(u(lambda orders, change: change))
+            .scan(lambda p, orders: d(orders=orders, change=({} if p.orders is None else set(orders) - set(p.orders))),
+                  d(orders=None, change=None))
+            .map(lambda p: p.change)
             .switch_map(Observable.from_iterable))
 
     def _get_jumping_price(self):
@@ -133,17 +133,25 @@ class Trader:
 
     def _subscribe_for_time_and_price(self):
         return (Observable
-            .combine_latest(self._get_time(), self._get_price(), r)
+            .combine_latest(
+                self._get_time(),
+                self._get_price(),
+                d('time', 'price')
+            )
             .throttle_first(self.SHOW_TIME_AND_PRICE_INTERVAL, MAIN_THREAD)
-            .subscribe(u(lambda time, price: logger.info('[%s] Time now is %s, price is %s', self._options.pair, time,
-                                                         price))))
+            .subscribe(lambda p: logger.info('[%s] Time now is %s, price is %s', self._options.pair, p.time, p.price)))
 
     def _subscribe_for_balance(self):
         return (Observable
-            .combine_latest(self._get_first_currency_balance(), self._get_second_currency_balance(), r)
-            .distinct_until_changed(u(lambda value1, change1, value2, change2: (value1, value2)))
-            .subscribe(u(lambda value1, change1, value2, change2: logger.info('[%s] Balance is %s %s (%s) and %s %s (%s)', self._options.pair, value1,
-                                                                              self._options.pair.first, change1, value2, self._options.pair.second, change2))))
+            .combine_latest(
+                self._get_first_currency_balance(),
+                self._get_second_currency_balance(),
+                d('b1', 'b2')
+            )
+            .distinct_until_changed(lambda p: (p.b1.balance, p.b2.balance))
+            .subscribe(lambda p: logger.info('[%s] Balance is %s %s (%s) and %s %s (%s)', self._options.pair,
+                                             p.b1.balance, self._options.pair.first, p.b1.change, p.b2.balance,
+                                             self._options.pair.second, p.b2.change)))
 
     def _subscribe_for_active_orders(self):
         return CompositeDisposable(
@@ -158,25 +166,24 @@ class Trader:
 
     def _subscribe_for_completed_orders(self):
         common = (self._get_completed_orders_singly()
-            .map(lambda order: r(*self._get_type_and_amount_and_price_for_new_order(order)))
-            .filter(u(lambda order_type, amount, price: amount >= self._options.min_amount)))
+            .map(lambda order: self._get_type_and_amount_and_price_for_new_order(order))
+            .map(d('order_type', 'amount', 'price'))
+            .filter(lambda p: p.amount >= self._options.min_amount))
         return CompositeDisposable(
             (self._get_completed_orders_singly()
                 .subscribe(lambda order: logger.info('[%s] %s completed', self._options.pair, order))),
             (Observable
                 .combine_latest(
                     (common
-                        .filter(u(lambda order_type, amount, price: order_type == Order.TYPE_SELL))
-                        .map(u(lambda order_type, amount, price: r(amount, price)))),
+                        .filter(lambda p: p.order_type == Order.TYPE_SELL)
+                        .map(lambda p: (p.amount, p.price))),
                     (self._get_first_currency_balance()
-                        .map(u(lambda balance, change: balance))),
-                    r
+                        .map(lambda p: p.balance)),
+                    d('amount', 'price', 'balance')
                 )
-                .distinct_until_changed(u(lambda amount, price, balance: (amount, price)))
-                .filter(u(lambda amount, price, balance: amount <= balance))
-                .map(u(lambda amount, price, balance: r(amount, price)))
-                .subscribe(u(lambda amount, price: self._create_sell_order(amount, price,
-                                                                           self.REASON_ORDER_COMPLETED)))),
+                .distinct_until_changed(lambda p: (p.amount, p.price))
+                .filter(lambda p: p.amount <= p.balance)
+                .subscribe(lambda p: self._create_sell_order(p.amount, p.price, self.REASON_ORDER_COMPLETED))),
             (Observable
                 .combine_latest(
                     (common
