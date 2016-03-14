@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from random import uniform
 
@@ -8,7 +8,7 @@ from rx.disposables import CompositeDisposable
 from btce import config, commands, events
 from btce.common import normalize_value, get_logger, MAIN_THREAD
 from btce.models import TradingOptions, Order
-from btce.utils import d
+from btce.utils import get_data_packed as d
 
 logger = get_logger(__name__)
 
@@ -74,7 +74,7 @@ class Trader:
 
     def _get_completed_orders_singly(self):
         return (self._get_completed_orders()
-            .scan(lambda p, orders: d(orders=orders, change=({} if p.orders is None else set(orders) - set(p.orders))),
+            .scan(lambda p, orders: d(orders=orders, change=(set() if p.orders is None else set(orders) - set(p.orders))),
                   d(orders=None, change=None))
             .map(lambda p: p.change)
             .switch_map(Observable.from_iterable))
@@ -144,14 +144,14 @@ class Trader:
     def _subscribe_for_balance(self):
         return (Observable
             .combine_latest(
-                self._get_first_currency_balance(),
-                self._get_second_currency_balance(),
-                d('b1', 'b2')
+                self._get_first_currency_balance().map(lambda p: d(balance1=p.balance, change1=p.change)),
+                self._get_second_currency_balance().map(lambda p: d(balance2=p.balance, change2=p.change)),
+                d('balance1', 'change1', 'balance2', 'change2')
             )
-            .distinct_until_changed(lambda p: (p.b1.balance, p.b2.balance))
+            .distinct_until_changed(lambda p: (p.balance1, p.balance2))
             .subscribe(lambda p: logger.info('[%s] Balance is %s %s (%s) and %s %s (%s)', self._options.pair,
-                                             p.b1.balance, self._options.pair.first, p.b1.change, p.b2.balance,
-                                             self._options.pair.second, p.b2.change)))
+                                             p.balance1, self._options.pair.first, p.change1, p.balance2,
+                                             self._options.pair.second, p.change2)))
 
     def _subscribe_for_active_orders(self):
         return CompositeDisposable(
@@ -174,11 +174,8 @@ class Trader:
                 .subscribe(lambda order: logger.info('[%s] %s completed', self._options.pair, order))),
             (Observable
                 .combine_latest(
-                    (common
-                        .filter(lambda p: p.order_type == Order.TYPE_SELL)
-                        .map(lambda p: (p.amount, p.price))),
-                    (self._get_first_currency_balance()
-                        .map(lambda p: p.balance)),
+                    common.filter(lambda p: p.order_type == Order.TYPE_SELL),
+                    self._get_first_currency_balance().map(lambda p: p.balance),
                     d('amount', 'price', 'balance')
                 )
                 .distinct_until_changed(lambda p: (p.amount, p.price))
@@ -186,18 +183,13 @@ class Trader:
                 .subscribe(lambda p: self._create_sell_order(p.amount, p.price, self.REASON_ORDER_COMPLETED))),
             (Observable
                 .combine_latest(
-                    (common
-                        .filter(u(lambda order_type, amount, price: order_type == Order.TYPE_BUY))
-                        .map(u(lambda order_type, amount, price: r(amount, price)))),
-                    (self._get_second_currency_balance()
-                        .map(u(lambda balance, change: balance))),
-                    r
+                    common.filter(lambda p: p.order_type == Order.TYPE_BUY),
+                    self._get_second_currency_balance().map(lambda p: p.balance),
+                    d('amount', 'price', 'balance')
                 )
-                .distinct_until_changed(u(lambda amount, price, balance: (amount, price)))
-                .filter(u(lambda amount, price, balance: amount * price <= balance))
-                .map(u(lambda amount, price, balance: r(amount, price)))
-                .subscribe(u(lambda amount, price: self._create_buy_order(amount, price,
-                                                                          self.REASON_ORDER_COMPLETED))))
+                .distinct_until_changed(lambda p: (p.amount, p.price))
+                .filter(lambda p: p.amount * p.price <= p.balance)
+                .subscribe(lambda p: self._create_buy_order(p.amount, p.price, self.REASON_ORDER_COMPLETED)))
         )
 
     def _subscribe_for_jumping_price(self):
@@ -205,19 +197,19 @@ class Trader:
             (Observable
                 .combine_latest(
                     self._get_jumping_price(),
-                    self._get_first_currency_balance().map(u(lambda balance, change: balance)),
-                    r
+                    self._get_first_currency_balance().map(lambda p: p.balance),
+                    d('price', 'balance')
                 )
-                .distinct_until_changed(u(lambda price, balance: price))
-                .subscribe(u(lambda price, balance: self._create_sell_order(balance, price, self.REASON_PRICE_JUMP)))),
+                .distinct_until_changed(lambda p: p.price)
+                .subscribe(lambda p: self._create_sell_order(p.balance, p.price, self.REASON_PRICE_JUMP))),
             (Observable
                 .combine_latest(
                     self._get_jumping_price(),
-                    self._get_second_currency_balance().map(u(lambda balance, change: balance)),
-                    r
+                    self._get_second_currency_balance().map(lambda p: p.balance),
+                    d('price', 'balance')
                 )
-                .distinct_until_changed(u(lambda price, balance: price))
-                .subscribe(u(lambda price, balance: self._create_buy_order(balance, price, self.REASON_PRICE_JUMP)))),
+                .distinct_until_changed(lambda p: p.price)
+                .subscribe(lambda p: self._create_buy_order(p.balance, p.price, self.REASON_PRICE_JUMP))),
         )
 
     def _get_type_and_amount_and_price_for_new_order(self, order):

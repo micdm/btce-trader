@@ -25,9 +25,25 @@ def r(*args):
     return _Result(args)
 
 
-def d(*names, **kwargs):
-    if names:
-        def _wrapper(*args):
-            return d(**dict(zip(names, args)))
-        return _wrapper
-    return namedtuple('Data', kwargs.keys())(**kwargs)
+def get_data_packed(*spec, **kwargs):
+    if not spec:
+        return namedtuple('Data', ('is_packed',) + tuple(kwargs.keys()))(is_packed=True, **kwargs)
+    def _wrapper(*args):
+        names = list(spec)
+        args = list(args)
+        kwargs = {}
+        while names:
+            name = names.pop(0)
+            if not args:
+                raise Exception('cannot match names and args')
+            arg = args.pop(0)
+            if hasattr(arg, 'is_packed'):
+                if hasattr(arg, name):
+                    kwargs[name] = getattr(arg, name)
+                    args.insert(0, arg)
+                else:
+                    names.insert(0, name)
+            else:
+                kwargs[name] = arg
+        return get_data_packed(**kwargs)
+    return _wrapper
