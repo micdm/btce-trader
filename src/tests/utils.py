@@ -1,5 +1,3 @@
-from btce.utils import u
-
 
 def use_dataproviders(cls):
     methods = _get_test_methods(cls)
@@ -7,7 +5,7 @@ def use_dataproviders(cls):
         raise Exception('no dataproviders used on {}'.format(cls))
     for name, method in methods:
         data_func = getattr(method, 'dataprovider')
-        for i, params in enumerate(data_func()):
+        for i, params in enumerate(getattr(cls, data_func)()):
             setattr(cls, '{}_{}'.format(name, i), _get_new_test_method(method, params))
         delattr(cls, name)
     return cls
@@ -30,19 +28,10 @@ def dataprovider(data_func):
     return wrapper
 
 
-def test_stream(subjects, stream, data):
-    if not isinstance(subjects, tuple):
-        subjects = (subjects,)
+def test_stream(stream, on_next, data):
     result = []
-    subscription = stream.subscribe(u(
-        lambda *args: result.append(args)
-    ))
+    subscription = stream.subscribe(result.append)
     for item in data:
-        if isinstance(item, dict):
-            for i, subject in enumerate(subjects):
-                if i in item:
-                    subject.on_next(item[i])
-        else:
-            subjects[0].on_next(item)
+        on_next(item)
     subscription.dispose()
-    return tuple(result)
+    return result[-1] if result else None
