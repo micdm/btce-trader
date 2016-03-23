@@ -302,7 +302,7 @@ class ExchangeConnector:
 
     @coroutine
     def _create_sell_order(self, pair, amount, price):
-        logger.debug('Creating sell order (%s%s for %s%s)', amount, pair.first, price, pair.second)
+        logger.debug('Creating sell order (%s %s for %s %s)', amount, pair.first, price, pair.second)
         try:
             balance = yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_SELL,
                                                          _currency_pair_to_string(pair), amount, price)
@@ -313,7 +313,7 @@ class ExchangeConnector:
 
     @coroutine
     def _create_buy_order(self, pair, amount, price):
-        logger.debug('Creating buy order (%s%s for %s%s)', amount, pair.first, price, pair.second)
+        logger.debug('Creating buy order (%s %s for %s %s)', amount, pair.first, price, pair.second)
         try:
             balance = yield self._trade_api.create_order(_TradeApiConnector.ORDER_TYPE_BUY, _currency_pair_to_string(pair), amount, price)
         except Exception as e:

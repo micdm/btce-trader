@@ -201,7 +201,8 @@ class Trader:
                     d('price', 'balance')
                 )
                 .distinct_until_changed(lambda p: p.price)
-                .subscribe(lambda p: self._create_sell_order(p.balance, p.price, self.REASON_PRICE_JUMP))),
+                .filter(lambda p: self._options.deal_amount <= p.balance)
+                .subscribe(lambda p: self._create_sell_order(self._options.deal_amount, p.price, self.REASON_PRICE_JUMP))),
             (Observable
                 .combine_latest(
                     self._get_jumping_price(),
@@ -209,7 +210,8 @@ class Trader:
                     d('price', 'balance')
                 )
                 .distinct_until_changed(lambda p: p.price)
-                .subscribe(lambda p: self._create_buy_order(p.balance, p.price, self.REASON_PRICE_JUMP))),
+                .filter(lambda p: self._options.deal_amount * p.price <= p.balance)
+                .subscribe(lambda p: self._create_buy_order(self._options.deal_amount, p.price, self.REASON_PRICE_JUMP))),
         )
 
     def _get_type_and_amount_and_price_for_new_order(self, order):
@@ -223,19 +225,19 @@ class Trader:
         raise Exception('unknown order type %s' % order.type)
 
     def _create_sell_order(self, amount, price, reason):
-        logger.info('[%s] Create sell order: price is %s, reason is %s', self._options.pair, price, reason)
+        logger.info('[%s] Create sell order: %s for %s, reason is %s', self._options.pair, amount, price, reason)
         self._commands.on_next(commands.CreateSellOrderCommand(self._options.pair, amount, price))
 
     def _create_buy_order(self, amount, price, reason):
-        logger.info('[%s] Create buy order: price is %s, reason is %s', self._options.pair, price, reason)
+        logger.info('[%s] Create buy order: %s for %s, reason is %s', self._options.pair, amount, price, reason)
         self._commands.on_next(commands.CreateBuyOrderCommand(self._options.pair, amount, price))
 
     def _get_random_margin_jitter(self, jitter):
         return normalize_value(Decimal(uniform(-float(jitter), float(jitter))), 4)
 
     def _cancel_order(self, order):
-        logger.info('[%s] Cancel outdated order %s created %s (%s ago)', self._options.pair, order.id, order,
-                    order.created, datetime.utcnow() - order.created)
+        logger.info('[%s] Cancel outdated order %s created %s (%s ago)', self._options.pair, order, order.created,
+                    datetime.utcnow() - order.created)
         self._commands.on_next(commands.CancelOrderCommand(order.id))
 
     def deinit(self):

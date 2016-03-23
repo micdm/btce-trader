@@ -37,8 +37,8 @@ class GetCompletedOrdersCommand(_Command):
 
 class _CreateOrderCommand(_Command):
 
-    def __init__(self, currency: Currency, amount: Decimal, price: Decimal):
-        self.currency = currency
+    def __init__(self, pair: CurrencyPair, amount: Decimal, price: Decimal):
+        self.pair = pair
         self.amount = amount
         self.price = price
 
