@@ -46,8 +46,8 @@ class Trader:
             .filter(lambda event: event.pair == self._options.pair)
             .map(lambda event: event.value))
 
-    def _get_balance(self, currency):
-        return (self._events
+    def _get_balance(self, event_stream, currency):
+        return (event_stream
             .filter(lambda event: isinstance(event, events.BalanceEvent))
             .filter(lambda event: event.currency == currency)
             .map(lambda event: event.value)
@@ -55,10 +55,10 @@ class Trader:
                   d(balance=None, change=None)))
 
     def _get_first_currency_balance(self):
-        return self._get_balance(self._options.pair.first)
+        return self._get_balance(self._events, self._options.pair.first)
 
     def _get_second_currency_balance(self):
-        return self._get_balance(self._options.pair.second)
+        return self._get_balance(self._events, self._options.pair.second)
 
     def _get_active_orders(self):
         return (self._events
@@ -66,14 +66,11 @@ class Trader:
             .filter(lambda event: event.pair == self._options.pair)
             .map(lambda event: event.orders))
 
-    def _get_completed_orders(self):
-        return (self._events
+    def _get_completed_orders_singly(self, event_stream, pair):
+        return (event_stream
             .filter(lambda event: isinstance(event, events.CompletedOrdersEvent))
-            .filter(lambda event: event.pair == self._options.pair)
-            .map(lambda event: event.orders))
-
-    def _get_completed_orders_singly(self):
-        return (self._get_completed_orders()
+            .filter(lambda event: event.pair == pair)
+            .map(lambda event: event.orders)
             .scan(lambda p, orders: d(orders=orders, change=(set() if p.orders is None else set(orders) - set(p.orders))),
                   d(orders=None, change=None))
             .map(lambda p: p.change)
@@ -164,31 +161,41 @@ class Trader:
                 .subscribe(self._cancel_order))
         )
 
-    def _subscribe_for_completed_orders(self):
-        common = (self._get_completed_orders_singly()
-            .map(lambda order: self._get_type_and_amount_and_price_for_new_order(order))
+    def _get_new_orders(self, completed_orders, min_amount):
+        return (completed_orders
+            .map(self._get_type_and_amount_and_price_for_new_order)
             .map(d('order_type', 'amount', 'price'))
-            .filter(lambda p: p.amount >= self._options.min_amount))
+            .filter(lambda p: p.amount >= min_amount))
+
+    def _get_new_sell_orders(self, event_stream, pair, min_amount):
+        return (Observable
+            .combine_latest(
+                (self._get_new_orders(self._get_completed_orders_singly(event_stream, pair), min_amount)
+                    .filter(lambda p: p.order_type == Order.TYPE_SELL)),
+                self._get_first_currency_balance().map(lambda p: p.balance),
+                d('amount', 'price', 'balance')
+            )
+            .distinct_until_changed(lambda p: (p.amount, p.price))
+            .filter(lambda p: p.amount <= p.balance))
+
+    def _get_new_buy_orders(self, event_stream, pair, min_amount):
+        return (Observable
+            .combine_latest(
+                (self._get_new_orders(self._get_completed_orders_singly(event_stream, pair), min_amount)
+                    .filter(lambda p: p.order_type == Order.TYPE_BUY)),
+                self._get_second_currency_balance().map(lambda p: p.balance),
+                d('amount', 'price', 'balance')
+            )
+            .distinct_until_changed(lambda p: (p.amount, p.price))
+            .filter(lambda p: p.amount * p.price <= p.balance))
+
+    def _subscribe_for_completed_orders(self):
         return CompositeDisposable(
-            (self._get_completed_orders_singly()
+            (self._get_completed_orders_singly(self._events, self._options.pair)
                 .subscribe(lambda order: logger.info('[%s] %s completed', self._options.pair, order))),
-            (Observable
-                .combine_latest(
-                    common.filter(lambda p: p.order_type == Order.TYPE_SELL),
-                    self._get_first_currency_balance().map(lambda p: p.balance),
-                    d('amount', 'price', 'balance')
-                )
-                .distinct_until_changed(lambda p: (p.amount, p.price))
-                .filter(lambda p: p.amount <= p.balance)
+            (self._get_new_sell_orders(self._events, self._options.pair, self._options.min_amount)
                 .subscribe(lambda p: self._create_sell_order(p.amount, p.price, self.REASON_ORDER_COMPLETED))),
-            (Observable
-                .combine_latest(
-                    common.filter(lambda p: p.order_type == Order.TYPE_BUY),
-                    self._get_second_currency_balance().map(lambda p: p.balance),
-                    d('amount', 'price', 'balance')
-                )
-                .distinct_until_changed(lambda p: (p.amount, p.price))
-                .filter(lambda p: p.amount * p.price <= p.balance)
+            (self._get_new_buy_orders(self._events, self._options.pair, self._options.min_amount)
                 .subscribe(lambda p: self._create_buy_order(p.amount, p.price, self.REASON_ORDER_COMPLETED)))
         )
 

@@ -26,12 +26,3 @@ def dataprovider(data_func):
         setattr(func, 'dataprovider', data_func)
         return func
     return wrapper
-
-
-def test_stream(stream, on_next, data):
-    result = []
-    subscription = stream.subscribe(result.append)
-    for item in data:
-        on_next(item)
-    subscription.dispose()
-    return result[-1] if result else None

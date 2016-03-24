@@ -16,6 +16,12 @@ class UtilsTest(TestCase):
         self.assertEqual(data.foo, 1)
         self.assertEqual(data.bar, 2)
 
+    def test_get_data_packed_if_factory_and_tuple(self):
+        factory = get_data_packed('foo', 'bar')
+        data = factory((1, 2))
+        self.assertEqual(data.foo, 1)
+        self.assertEqual(data.bar, 2)
+
     def test_get_data_packed_if_factory_and_packed_params(self):
         factory = get_data_packed('foo', 'bar')
         data = factory(get_data_packed(foo=1), 2)

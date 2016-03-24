@@ -2,12 +2,12 @@ from decimal import Decimal
 from unittest import TestCase
 
 from mox3.mox import Mox
-from rx.subjects import Subject
+from rx import Observable
 
 from btce import events
 from btce.trader import Trader
 from btce.utils import get_data_packed as d
-from tests.utils import test_stream, dataprovider, use_dataproviders
+from tests.utils import dataprovider, use_dataproviders
 
 
 @use_dataproviders
@@ -29,7 +29,38 @@ class TraderTest(TestCase):
 
     @dataprovider('provider_get_balance')
     def test_get_balance(self, input_data, expected):
-        events = Subject()
-        trader = Trader(None, events, None)
-        result = test_stream(trader._get_balance('currency'), events.on_next, input_data)
-        self.assertEqual(result, expected)
+        trader = Trader(None, None, None)
+        result = list(trader._get_balance(Observable.from_iterable(input_data), 'currency').to_blocking())
+        self.assertEqual(result[-1] if result else None, expected)
+
+    @staticmethod
+    def provider_get_completed_orders_singly():
+        return (
+            (('event',), None),
+            ((events.CompletedOrdersEvent('pair', (1,)), events.CompletedOrdersEvent('pair', (1,))), None),
+            ((events.CompletedOrdersEvent('pair', (1,)), events.CompletedOrdersEvent('pair', (1, 2, 3))), 3),
+        )
+
+    @dataprovider('provider_get_completed_orders_singly')
+    def test_get_completed_orders_singly(self, input_data, expected):
+        trader = Trader(None, None, None)
+        result = list(trader._get_completed_orders_singly(Observable.from_iterable(input_data), 'pair').to_blocking())
+        self.assertEqual(result[-1] if result else None, expected)
+
+    @staticmethod
+    def provider_get_new_orders():
+        return (
+            ((1,), None),
+            ((3,), d(order_type='order_type', amount=3, price='price')),
+        )
+
+    @dataprovider('provider_get_new_orders')
+    def test_get_new_orders(self, input_data, expected):
+        trader = Trader(None, None, None)
+        self._mox.StubOutWithMock(trader, '_get_type_and_amount_and_price_for_new_order')
+        for amount in input_data:
+            trader._get_type_and_amount_and_price_for_new_order(amount).AndReturn(('order_type', amount, 'price'))
+        self._mox.ReplayAll()
+        result = list(trader._get_new_orders(Observable.from_iterable(input_data), 2).to_blocking())
+        self.assertEqual(result[-1] if result else None, expected)
+        self._mox.VerifyAll()
