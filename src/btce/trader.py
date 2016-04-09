@@ -1,5 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
+from functools import partial
+
 from random import uniform
 
 from rx import Observable
@@ -203,7 +205,7 @@ class Trader:
         return CompositeDisposable(
             (Observable
                 .combine_latest(
-                    self._get_jumping_price(),
+                    self._get_jumping_price().map(partial(self._get_new_price, Order.TYPE_SELL)),
                     self._get_first_currency_balance().map(lambda p: p.balance),
                     d('price', 'balance')
                 )
@@ -212,7 +214,7 @@ class Trader:
                 .subscribe(lambda p: self._create_sell_order(self._options.deal_amount, p.price, self.REASON_PRICE_JUMP))),
             (Observable
                 .combine_latest(
-                    self._get_jumping_price(),
+                    self._get_jumping_price().map(partial(self._get_new_price, Order.TYPE_BUY)),
                     self._get_second_currency_balance().map(lambda p: p.balance),
                     d('price', 'balance')
                 )
@@ -222,14 +224,19 @@ class Trader:
         )
 
     def _get_type_and_amount_and_price_for_new_order(self, order):
-        margin = self._options.margin + self._get_random_margin_jitter(self._options.margin_jitter)
         if order.type == Order.TYPE_SELL:
-            price = normalize_value(order.price - order.price * margin, self._options.pair.second.places)
-            return Order.TYPE_BUY, order.amount, price
+            return Order.TYPE_BUY, order.amount, self._get_new_price(Order.TYPE_BUY, order.price)
         if order.type == Order.TYPE_BUY:
-            price = normalize_value(order.price + order.price * margin, self._options.pair.second.places)
-            return Order.TYPE_SELL, order.amount, price
+            return Order.TYPE_SELL, order.amount, self._get_new_price(Order.TYPE_SELL, order.price)
         raise Exception('unknown order type %s' % order.type)
+
+    def _get_new_price(self, order_type, price):
+        margin = self._options.margin + self._get_random_margin_jitter(self._options.margin_jitter)
+        if order_type == Order.TYPE_SELL:
+            return normalize_value(price + price * margin, self._options.pair.second.places)
+        if order_type == Order.TYPE_BUY:
+            return normalize_value(price - price * margin, self._options.pair.second.places)
+        raise Exception('unknown order type %s' % order_type)
 
     def _create_sell_order(self, amount, price, reason):
         logger.info('[%s] Create sell order: %s for %s, reason is %s', self._options.pair, amount, price, reason)

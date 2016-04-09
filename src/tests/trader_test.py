@@ -1,10 +1,12 @@
 from decimal import Decimal
+import operator
 from unittest import TestCase
 
 from mox3.mox import Mox
 from rx import Observable
 
 from btce import events
+from btce.models import Order, TradingOptions, CurrencyPair, CURRENCY_BTC, CURRENCY_USD
 from btce.trader import Trader
 from btce.utils import get_data_packed as d
 from tests.utils import dataprovider, use_dataproviders
@@ -64,3 +66,17 @@ class TraderTest(TestCase):
         result = list(trader._get_new_orders(Observable.from_iterable(input_data), 2).to_blocking())
         self.assertEqual(result[-1] if result else None, expected)
         self._mox.VerifyAll()
+
+    @staticmethod
+    def provider_get_new_price():
+        return (
+            (Order.TYPE_SELL, operator.gt),
+            (Order.TYPE_BUY, operator.lt),
+        )
+
+    @dataprovider('provider_get_new_price')
+    def test_get_new_price(self, order_type, compare_function):
+        options = TradingOptions(CurrencyPair(CURRENCY_BTC, CURRENCY_USD), 1, 1, None, None, None)
+        trader = Trader(options, None, None)
+        price = trader._get_new_price(order_type, 100)
+        self.assertTrue(compare_function(price, 100))
