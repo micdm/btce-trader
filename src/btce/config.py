@@ -3,7 +3,7 @@ from decimal import Decimal
 import os.path
 
 from btce.models import CurrencyPair, TradingOptions, CURRENCY_BTC, CURRENCY_USD, CURRENCY_NMC, CURRENCY_NVC, \
-    CURRENCY_LTC, CURRENCY_PPC
+    CURRENCY_LTC, CURRENCY_PPC, CURRENCY_ETH
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 SRC_DIR = os.path.join(BASE_DIR, 'src')
@@ -36,6 +36,7 @@ TRADING = [
     _get_default_trading_options(CurrencyPair(CURRENCY_NMC, CURRENCY_USD), Decimal('0.1')),
     _get_default_trading_options(CurrencyPair(CURRENCY_NVC, CURRENCY_USD), Decimal('0.1')),
     _get_default_trading_options(CurrencyPair(CURRENCY_PPC, CURRENCY_USD), Decimal('0.1')),
+    _get_default_trading_options(CurrencyPair(CURRENCY_ETH, CURRENCY_USD), Decimal('0.1')),
 ]
 
 try:
